@@ -3,7 +3,7 @@ import crypto from 'crypto';
 const OLLAMA_BASE = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL_PREFIX = 'moondream';
 let resolvedModelName = 'moondream2'; // fallback; overwritten once Ollama confirms the real name
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS, 10) || 60000;
 const CACHE_TTL_MS = parseInt(process.env.VISION_CACHE_TTL_MS, 10) || 30000;
 
 const cache = new Map();
