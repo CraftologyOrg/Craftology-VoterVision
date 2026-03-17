@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 
 const OLLAMA_BASE = process.env.OLLAMA_URL || 'http://localhost:11434';
-const MODEL = 'moondream2';
+const MODEL_PREFIX = 'moondream';
+let resolvedModelName = 'moondream2'; // fallback; overwritten once Ollama confirms the real name
 const TIMEOUT_MS = 15000;
 const CACHE_TTL_MS = parseInt(process.env.VISION_CACHE_TTL_MS, 10) || 30000;
 
@@ -37,7 +38,9 @@ export async function checkModelAvailable() {
     }
     const data = await resp.json();
     const models = data.models || [];
-    modelReady = models.some(m => m.name && m.name.startsWith('moondream'));
+    const found = models.find(m => m.name && m.name.startsWith(MODEL_PREFIX));
+    modelReady = !!found;
+    if (found) resolvedModelName = found.name;
     return modelReady;
   } catch {
     modelReady = false;
@@ -70,7 +73,7 @@ export async function queryModel(prompt, screenshotB64) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL,
+        model: resolvedModelName,
         prompt,
         images: [screenshotB64],
         stream: false,
@@ -86,7 +89,7 @@ export async function queryModel(prompt, screenshotB64) {
       const text = await resp.text().catch(() => '');
       if (text.includes('not found') || text.includes('pull')) {
         modelReady = false;
-        return { error: 'model_unavailable', message: `moondream2 not available: ${text.slice(0, 200)}`, fallback: true };
+        return { error: 'model_unavailable', message: `${resolvedModelName} not available: ${text.slice(0, 200)}`, fallback: true };
       }
       return { error: 'model_unavailable', message: `Ollama returned ${resp.status}: ${text.slice(0, 200)}`, fallback: true };
     }
