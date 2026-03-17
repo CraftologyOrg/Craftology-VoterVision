@@ -6,6 +6,16 @@ import authPlugin from './middleware/auth.js';
 import analyzeRoutes from './routes/analyze.js';
 import { checkModelAvailable, isModelReady } from './lib/ollama.js';
 
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason);
+  process.exit(1);
+});
+
 const fastify = Fastify({
   logger: true,
   bodyLimit: 10 * 1024 * 1024, // 10MB for base64 screenshots
@@ -21,23 +31,27 @@ await fastify.register(supabasePlugin);
 await fastify.register(authPlugin);
 await fastify.register(analyzeRoutes);
 
+// Health check always returns 200 — Railway must not kill the container
+// just because the Ollama sidecar is temporarily unavailable.
 fastify.get('/health', { config: { skipAuth: true } }, async () => {
   const ready = isModelReady();
-  if (!ready) {
-    const available = await checkModelAvailable();
-    if (!available) {
-      throw { statusCode: 503, message: 'moondream2 not ready' };
-    }
-  }
-  return { status: 'ok', model: 'moondream2', ready: true };
+  return { status: 'ok', model: 'moondream2', ready };
 });
 
 const port = parseInt(process.env.PORT) || 3000;
 
+const shutdown = async (signal) => {
+  fastify.log.info(`Received ${signal} — shutting down gracefully`);
+  await fastify.close();
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 try {
   await fastify.listen({ port, host: '0.0.0.0' });
 
-  // Initial model check — log but don't crash if unavailable
   const available = await checkModelAvailable();
   if (available) {
     fastify.log.info('moondream2 model is available and ready');
@@ -45,7 +59,6 @@ try {
     fastify.log.warn('moondream2 model is not yet available — requests will return model_unavailable until it is pulled');
   }
 
-  // Self-ping to keep Railway container warm
   const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   if (publicDomain) {
     const pingUrl = `https://${publicDomain}/health`;
