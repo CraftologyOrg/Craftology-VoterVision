@@ -29,7 +29,7 @@ export default async function analyzeRoutes(fastify) {
 
     const prompt = getPrompt(task, context);
 
-    const modelResult = await queryModel(prompt, screenshot);
+    const modelResult = await queryModel(prompt, screenshot, task);
 
     if (modelResult.error) {
       request.log.warn({

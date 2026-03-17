@@ -4,7 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import supabasePlugin from './plugins/supabase.js';
 import authPlugin from './middleware/auth.js';
 import analyzeRoutes from './routes/analyze.js';
-import { checkModelAvailable, isModelReady } from './lib/ollama.js';
+import { checkModelAvailable, isModelReady, warmupModel } from './lib/ollama.js';
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] uncaughtException:', err);
@@ -55,6 +55,9 @@ try {
   const available = await checkModelAvailable();
   if (available) {
     fastify.log.info('moondream2 model is available and ready');
+    // Pre-load model weights into RAM so the first real request pays no cold-start penalty
+    warmupModel().then(() => fastify.log.info('moondream2 warmup complete'))
+                  .catch(() => {});
   } else {
     fastify.log.warn('moondream2 model is not yet available — requests will return model_unavailable until it is pulled');
   }

@@ -6,6 +6,19 @@ let resolvedModelName = 'moondream2'; // fallback; overwritten once Ollama confi
 const TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS, 10) || 60000;
 const CACHE_TTL_MS = parseInt(process.env.VISION_CACHE_TTL_MS, 10) || 30000;
 
+// Keep model loaded for 30 minutes to avoid reload penalty between votes
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
+
+// Moondream responses are small JSON blobs — cap tokens per task to avoid
+// generating dead tokens on CPU hardware where every token costs real time.
+const TASK_NUM_PREDICT = {
+  check_page_ready: 100,
+  find_submit_button: 150,
+  detect_captcha: 150,
+  detect_vote_result: 150,
+  find_input_fields: 256,
+};
+
 const cache = new Map();
 
 setInterval(() => {
@@ -52,7 +65,27 @@ export function isModelReady() {
   return modelReady;
 }
 
-export async function queryModel(prompt, screenshotB64) {
+export async function warmupModel() {
+  if (!modelReady) return;
+  try {
+    await fetch(`${OLLAMA_BASE}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: resolvedModelName,
+        prompt: 'hi',
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_predict: 1 },
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    // warmup failure is non-fatal
+  }
+}
+
+export async function queryModel(prompt, screenshotB64, task) {
   const key = cacheKey(prompt, screenshotB64);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
@@ -77,9 +110,10 @@ export async function queryModel(prompt, screenshotB64) {
         prompt,
         images: [screenshotB64],
         stream: false,
+        keep_alive: KEEP_ALIVE,
         options: {
           temperature: 0.1,
-          num_predict: 512,
+          num_predict: TASK_NUM_PREDICT[task] ?? 256,
         },
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
