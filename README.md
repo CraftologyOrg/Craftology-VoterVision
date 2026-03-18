@@ -13,6 +13,10 @@ Electron Vote Engine  ──POST /analyze──▶  VisionBackend  ──/api/ge
 
 The vote engine never depends on VisionBackend being available. Every call has a 20s client-side timeout and falls back to existing hardcoded logic on any failure.
 
+### Captcha Queue Compatibility
+
+The vote engine serializes all vision calls through a class-level promise-chain queue (`captchaQueue`). Even when multiple browser tabs are voting concurrently, only one `POST /analyze` request is in-flight at a time. This matches Ollama's single-inference-at-a-time constraint and eliminates queuing pressure and timeout races under tab parallelism.
+
 ## Supported Tasks
 
 | Task | Description |
@@ -81,7 +85,6 @@ The vote engine never depends on VisionBackend being available. Every call has a
 | `OLLAMA_URL` | No | Ollama base URL (default: `http://localhost:11434`) |
 | `VISION_CACHE_TTL_MS` | No | Response cache TTL in ms (default: 30000) |
 | `AUTH_CACHE_TTL_MS` | No | Auth token cache TTL in ms (default: 300000) |
-| `RAILWAY_PUBLIC_DOMAIN` | Auto | Set by Railway — used for self-ping keepalive |
 
 ## Electron App Configuration
 
@@ -151,6 +154,21 @@ npm run dev
 ### GET /health
 
 Returns 200 when moondream2 is loaded and responding, 503 otherwise.
+
+## Service Monitoring
+
+Every **2 minutes** the server logs the status of both external dependencies:
+
+```json
+{ "ollama": "available", "supabase": "connected" }
+```
+
+- **Ollama** — `GET /api/tags` to check if a `moondream*` model is present and set the internal `modelReady` flag
+- **Supabase** — HTTP ping to the REST endpoint using the service role key
+
+The `modelReady` flag is updated exclusively by this interval (plus the initial startup check). Incoming `/analyze` requests check the flag directly and return `503 model_unavailable` immediately if it is false — there is no per-request re-check of Ollama, which would amplify load under concurrent tab parallelism.
+
+The `/health` endpoint always returns `200` and is never logged, so Railway health checks do not produce log noise.
 
 ## Memory Budget
 
