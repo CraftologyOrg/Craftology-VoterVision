@@ -93,10 +93,7 @@ export async function queryModel(prompt, screenshotB64, task) {
   }
 
   if (!modelReady) {
-    await checkModelAvailable();
-    if (!modelReady) {
-      return { error: 'model_unavailable', message: 'moondream2 is not loaded or available', fallback: true };
-    }
+    return { error: 'model_unavailable', message: 'moondream2 is not loaded or available', fallback: true };
   }
 
   const start = Date.now();

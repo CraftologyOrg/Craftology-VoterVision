@@ -55,29 +55,35 @@ try {
   const available = await checkModelAvailable();
   if (available) {
     fastify.log.info('moondream2 model is available and ready');
-    // Pre-load model weights into RAM so the first real request pays no cold-start penalty
     warmupModel().then(() => fastify.log.info('moondream2 warmup complete'))
                   .catch(() => {});
   } else {
     fastify.log.warn('moondream2 model is not yet available — requests will return model_unavailable until it is pulled');
   }
 
-  const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
-  if (publicDomain) {
-    const pingUrl = `https://${publicDomain}/health`;
-    const PING_INTERVAL_MS = 10 * 60 * 1000;
+  const STATUS_INTERVAL_MS = 2 * 60 * 1000;
+  setInterval(async () => {
+    const ollamaAvailable = await checkModelAvailable();
 
-    setInterval(async () => {
+    let supabaseStatus = 'unknown';
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && supabaseKey) {
       try {
-        await fetch(pingUrl, { signal: AbortSignal.timeout(10000) });
-        fastify.log.debug('Self-ping successful');
-      } catch (err) {
-        fastify.log.warn({ err: err.message }, 'Self-ping failed');
+        const resp = await fetch(`${supabaseUrl}/rest/v1/`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        supabaseStatus = resp.ok || resp.status < 500 ? 'connected' : 'degraded';
+      } catch {
+        supabaseStatus = 'unreachable';
       }
-    }, PING_INTERVAL_MS).unref();
+    } else {
+      supabaseStatus = 'not configured';
+    }
 
-    fastify.log.info({ pingUrl, intervalMinutes: 10 }, 'Self-ping keepalive configured');
-  }
+    fastify.log.info({ ollama: ollamaAvailable ? 'available' : 'unavailable', supabase: supabaseStatus }, 'Service status');
+  }, STATUS_INTERVAL_MS).unref();
 } catch (err) {
   fastify.log.error(err);
   process.exit(1);
