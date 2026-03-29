@@ -6,24 +6,31 @@ import authPlugin from './middleware/auth.js';
 import analyzeRoutes from './routes/analyze.js';
 import { checkModelAvailable, isModelReady, warmupModel } from './lib/ollama.js';
 
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] uncaughtException:', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] unhandledRejection:', reason);
-  process.exit(1);
-});
-
 const fastify = Fastify({
   logger: true,
+  trustProxy: process.env.TRUST_PROXY === 'true',
   bodyLimit: 10 * 1024 * 1024, // 10MB for base64 screenshots
 });
 
+// Production: log promise rejections without tearing down the server (orchestrator can still restart on crash).
+process.on('unhandledRejection', (reason) => {
+  fastify.log.error({ reason }, 'unhandledRejection');
+});
+
+// Uncaught exceptions leave the process in an undefined state — close HTTP gracefully, then exit for a clean restart.
+process.on('uncaughtException', (err) => {
+  fastify.log.fatal(err, 'uncaughtException');
+  fastify
+    .close()
+    .catch(() => {})
+    .finally(() => process.exit(1));
+});
+
 await fastify.register(rateLimit, {
-  max: 30,
+  max: 4000,
   timeWindow: '1 minute',
+  // Pre-auth limiter must not trust client-provided identity headers.
+  keyGenerator: (request) => request.ip,
   errorResponseBuilder: () => ({ error: 'Too many requests', fallback: true }),
 });
 
@@ -33,9 +40,30 @@ await fastify.register(analyzeRoutes);
 
 // Health check always returns 200 — Railway must not kill the container
 // just because the Ollama sidecar is temporarily unavailable.
-fastify.get('/health', { config: { skipAuth: true } }, async () => {
+fastify.get('/live', {
+  config: { skipAuth: true, rateLimit: false },
+}, async () => {
   const ready = isModelReady();
   return { status: 'ok', model: 'moondream2', ready };
+});
+
+// Backward compatibility alias.
+fastify.get('/health', {
+  config: { skipAuth: true, rateLimit: false },
+}, async () => {
+  const ready = isModelReady();
+  return { status: 'ok', model: 'moondream2', ready };
+});
+
+fastify.get('/ready', {
+  config: { skipAuth: true, rateLimit: false },
+}, async (_request, reply) => {
+  // Probe dependency availability directly; do not depend on user traffic.
+  const available = await checkModelAvailable();
+  if (!available || !isModelReady()) {
+    return reply.code(503).send({ status: 'not_ready', model: 'moondream2', ready: false });
+  }
+  return { status: 'ready', model: 'moondream2', ready: true };
 });
 
 const port = parseInt(process.env.PORT) || 3000;

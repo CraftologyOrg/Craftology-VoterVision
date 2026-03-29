@@ -1,9 +1,17 @@
 import fp from 'fastify-plugin';
 
-const CACHE_TTL_MS = parseInt(process.env.AUTH_CACHE_TTL_MS, 10) || 300000;
+const CACHE_TTL_MS = parseInt(process.env.AUTH_CACHE_TTL_MS, 10) || 60000;
+const CACHE_MAX_ENTRIES = parseInt(process.env.AUTH_CACHE_MAX_ENTRIES, 10) || 5000;
 
 const authPlugin = async (fastify) => {
   const tokenCache = new Map();
+  const enforceCacheLimit = () => {
+    while (tokenCache.size > CACHE_MAX_ENTRIES) {
+      const oldestKey = tokenCache.keys().next().value;
+      if (!oldestKey) break;
+      tokenCache.delete(oldestKey);
+    }
+  };
 
   setInterval(() => {
     const now = Date.now();
@@ -82,6 +90,7 @@ const authPlugin = async (fastify) => {
     const tokenExpiry = new Date(tokenRow.expires_at).getTime();
     const cacheExpiresAt = Math.min(Date.now() + CACHE_TTL_MS, tokenExpiry);
     tokenCache.set(cacheKey, { user, license, cacheExpiresAt });
+    enforceCacheLimit();
 
     request.user = user;
     request.license = license;

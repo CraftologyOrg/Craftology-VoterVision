@@ -14,7 +14,7 @@ const TASK_SCHEMAS = {
     defaults: {
       present: false,
       active: false,
-      type: 'none',
+      type: 'unknown',
       description: '',
       position: 'unknown',
     },
@@ -79,8 +79,8 @@ function extractFallbackFields(raw, task) {
     return { found, text: '', approximate_position: 'unknown', description: raw.slice(0, 200), likely_selector_hint: '' };
   }
   if (task === 'detect_captcha') {
-    const present = lower.includes('captcha') || lower.includes('recaptcha') || lower.includes('hcaptcha');
-    return { present, active: present, type: present ? 'unknown' : 'none', description: raw.slice(0, 200), position: 'unknown' };
+    const present = lower.includes('captcha') || lower.includes('recaptcha') || lower.includes('hcaptcha') || lower.includes('turnstile') || lower.includes('robot');
+    return { present, active: present, type: 'unknown', description: raw.slice(0, 200), position: 'unknown' };
   }
   if (task === 'check_page_ready') {
     const ready = lower.includes('ready') || lower.includes('loaded') || lower.includes('visible');

@@ -3,8 +3,9 @@ import crypto from 'crypto';
 const OLLAMA_BASE = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL_PREFIX = 'moondream';
 let resolvedModelName = 'moondream2'; // fallback; overwritten once Ollama confirms the real name
-const TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS, 10) || 60000;
+const TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS, 10) || 20000;
 const CACHE_TTL_MS = parseInt(process.env.VISION_CACHE_TTL_MS, 10) || 30000;
+const CACHE_MAX_ENTRIES = parseInt(process.env.VISION_CACHE_MAX_ENTRIES, 10) || 500;
 
 // Keep model loaded for 30 minutes to avoid reload penalty between votes
 const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
@@ -20,6 +21,13 @@ const TASK_NUM_PREDICT = {
 };
 
 const cache = new Map();
+function enforceCacheLimit() {
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
 
 setInterval(() => {
   const now = Date.now();
@@ -28,17 +36,17 @@ setInterval(() => {
   }
 }, 60000).unref();
 
-function cacheKey(task, screenshotB64) {
+function cacheKey(task, prompt, screenshotB64) {
   const hash = crypto.createHash('sha256')
     .update(task)
-    .update(screenshotB64.slice(0, 2048))
-    .update(screenshotB64.slice(-2048))
-    .update(String(screenshotB64.length))
+    .update(prompt || '')
+    .update(screenshotB64)
     .digest('hex');
   return `${task}:${hash}`;
 }
 
 let modelReady = false;
+let lastSuccessfulModelCallAt = 0;
 
 export async function checkModelAvailable() {
   try {
@@ -65,6 +73,10 @@ export function isModelReady() {
   return modelReady;
 }
 
+export function getLastSuccessfulModelCallAt() {
+  return lastSuccessfulModelCallAt;
+}
+
 export async function warmupModel() {
   if (!modelReady) return;
   try {
@@ -86,7 +98,7 @@ export async function warmupModel() {
 }
 
 export async function queryModel(prompt, screenshotB64, task) {
-  const key = cacheKey(prompt, screenshotB64);
+  const key = cacheKey(task, prompt, screenshotB64);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return { response: cached.response, cached: true };
@@ -128,11 +140,15 @@ export async function queryModel(prompt, screenshotB64, task) {
     const data = await resp.json();
     const latencyMs = Date.now() - start;
     const response = data.response || '';
+    modelReady = true;
+    lastSuccessfulModelCallAt = Date.now();
 
     cache.set(key, { response, expiresAt: Date.now() + CACHE_TTL_MS });
+    enforceCacheLimit();
 
     return { response, latencyMs, cached: false };
   } catch (err) {
+    modelReady = false;
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       return { error: 'timeout', message: `moondream2 did not respond within ${TIMEOUT_MS}ms`, fallback: true };
     }

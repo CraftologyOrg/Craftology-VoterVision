@@ -1,4 +1,4 @@
-import { getPrompt, isValidTask } from '../lib/prompts.js';
+import { getPrompt, isValidTask, VALID_TASK_LIST } from '../lib/prompts.js';
 import { queryModel } from '../lib/ollama.js';
 import { parseResponse } from '../lib/parser.js';
 
@@ -6,14 +6,29 @@ const BODY_SCHEMA = {
   type: 'object',
   required: ['screenshot', 'task'],
   properties: {
-    screenshot: { type: 'string', minLength: 100 },
-    task: { type: 'string' },
-    context: { type: 'string' },
+    screenshot: {
+      type: 'string',
+      minLength: 100,
+      maxLength: 10 * 1024 * 1024,
+      // Basic base64 check (with optional data URL prefix).
+      pattern: '^(data:image\\/(png|jpeg|jpg|webp);base64,)?[A-Za-z0-9+/=\\r\\n]+$',
+    },
+    task: { type: 'string', enum: VALID_TASK_LIST },
+    context: { type: 'string', maxLength: 1024 },
   },
+  additionalProperties: false,
 };
 
 export default async function analyzeRoutes(fastify) {
   fastify.post('/analyze', {
+    config: {
+      // Expensive endpoint: keep much tighter than global limiter.
+      rateLimit: {
+        max: 120,
+        timeWindow: '1 minute',
+        keyGenerator: (request) => request.user?.id || request.license?.id || request.ip,
+      },
+    },
     schema: { body: BODY_SCHEMA },
   }, async (request, reply) => {
     const { screenshot, task, context } = request.body;
@@ -90,9 +105,11 @@ function estimateConfidence(task, parsed) {
       if (parsed.text || parsed.description) return 0.7;
       return 0.5;
     case 'detect_captcha':
-      if (!parsed.present) return 0.85;
-      if (parsed.type && parsed.type !== 'unknown') return 0.85;
-      return 0.6;
+      // Model only answers present/active; higher confidence when both are explicit booleans
+      if (!parsed.present) return 0.88;
+      if (parsed.present && parsed.active && parsed.description) return 0.9;
+      if (parsed.present && parsed.active) return 0.88;
+      return 0.72;
     case 'check_page_ready':
       if (parsed.ready && (!parsed.blocking_elements || parsed.blocking_elements.length === 0)) return 0.9;
       return 0.7;

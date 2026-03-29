@@ -4,11 +4,14 @@ const PROMPTS = {
 If no vote/submit button is visible, respond with: {"found": false}
 Use one of these positions: "center", "top", "bottom", "left", "right", "unknown".`,
 
-  detect_captcha: `This is a screenshot of a Minecraft server voting page. Determine if there is any CAPTCHA widget visible on this page. Look for reCAPTCHA checkboxes, hCaptcha, Cloudflare Turnstile, image grids, text challenges, or any other verification widget. Respond ONLY with JSON in this exact format, no other text:
-{"present": true, "active": true, "type": "recaptcha_v2", "description": "brief description", "position": "center"}
-If no captcha is visible, respond with: {"present": false, "active": false, "type": "none", "description": "no captcha visible", "position": "unknown"}
-For type use one of: "recaptcha_v2", "recaptcha_v3", "hcaptcha", "turnstile", "funcaptcha", "image_grid", "text", "unknown", "none".
-Set "active" to false if captcha elements appear hidden, grayed out, or not yet triggered.`,
+  detect_captcha: `This is a screenshot of a Minecraft server voting page. Answer ONLY whether a CAPTCHA or verification widget is visibly present (checkbox challenge, image grid, "I'm not a robot", hCaptcha/reCAPTCHA/Turnstile-style box, etc.). Do NOT guess the captcha provider or type — another system already knows the type.
+
+Respond ONLY with JSON in this exact format, no other text:
+{"present": true, "active": true, "description": "brief description of what you see", "position": "center"}
+If no captcha or verification widget is visible, respond with:
+{"present": false, "active": false, "description": "no captcha visible", "position": "unknown"}
+Set "active" to false if a captcha area appears hidden, grayed out, or not yet interactive.
+Use one of these positions: "center", "top", "bottom", "left", "right", "unknown".`,
 
   check_page_ready: `This is a screenshot of a Minecraft server voting page. Determine if the page has fully loaded and is ready for user interaction. Look for: visible forms, input fields, buttons, and absence of loading spinners or overlays. Respond ONLY with JSON in this exact format, no other text:
 {"ready": true, "reason": "explanation of why page is ready or not", "blocking_elements": []}
@@ -27,6 +30,7 @@ Set can_retry to true only if the page suggests trying again is possible.`,
 };
 
 const VALID_TASKS = new Set(Object.keys(PROMPTS));
+export const VALID_TASK_LIST = Object.freeze(Object.keys(PROMPTS));
 
 export function getPrompt(task, context) {
   const base = PROMPTS[task];
