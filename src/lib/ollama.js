@@ -20,6 +20,9 @@ const TASK_NUM_PREDICT = {
   detect_vote_result: 150,
   find_input_fields: 256,
 };
+const TASK_TIMEOUT_MS = {
+  locate_captcha_checkbox: Math.min(12000, TIMEOUT_MS),
+};
 
 const cache = new Map();
 function enforceCacheLimit() {
@@ -110,6 +113,7 @@ export async function queryModel(prompt, screenshotB64, task) {
   }
 
   const start = Date.now();
+  const requestTimeoutMs = TASK_TIMEOUT_MS[task] ?? TIMEOUT_MS;
 
   try {
     const resp = await fetch(`${OLLAMA_BASE}/api/generate`, {
@@ -126,7 +130,7 @@ export async function queryModel(prompt, screenshotB64, task) {
           num_predict: TASK_NUM_PREDICT[task] ?? 256,
         },
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
 
     if (!resp.ok) {
@@ -151,7 +155,7 @@ export async function queryModel(prompt, screenshotB64, task) {
   } catch (err) {
     modelReady = false;
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      return { error: 'timeout', message: `moondream2 did not respond within ${TIMEOUT_MS}ms`, fallback: true };
+      return { error: 'timeout', message: `moondream2 did not respond within ${requestTimeoutMs}ms`, fallback: true };
     }
     return { error: 'model_unavailable', message: err.message || String(err), fallback: true };
   }

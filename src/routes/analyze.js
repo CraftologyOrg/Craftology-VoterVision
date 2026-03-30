@@ -47,11 +47,13 @@ export default async function analyzeRoutes(fastify) {
     const modelResult = await queryModel(prompt, screenshot, task);
 
     if (modelResult.error) {
-      request.log.warn({
+      const timeoutOnFallbackTask = task === 'locate_captcha_checkbox' && modelResult.error === 'timeout';
+      const logger = timeoutOnFallbackTask ? request.log.info.bind(request.log) : request.log.warn.bind(request.log);
+      logger({
         task,
         error: modelResult.error,
         latencyMs: Date.now() - start,
-      }, 'Vision model error');
+      }, timeoutOnFallbackTask ? 'Vision fallback timeout' : 'Vision model error');
 
       return reply.code(modelResult.error === 'timeout' ? 504 : 503).send({
         error: modelResult.error,
