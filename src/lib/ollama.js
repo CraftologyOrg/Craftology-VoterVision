@@ -153,10 +153,11 @@ export async function queryModel(prompt, screenshotB64, task) {
 
     return { response, latencyMs, cached: false };
   } catch (err) {
-    modelReady = false;
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      // Timeout does not imply model is unavailable; keep readiness state as-is.
       return { error: 'timeout', message: `moondream2 did not respond within ${requestTimeoutMs}ms`, fallback: true };
     }
+    modelReady = false;
     return { error: 'model_unavailable', message: err.message || String(err), fallback: true };
   }
 }
