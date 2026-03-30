@@ -37,7 +37,7 @@ export default async function analyzeRoutes(fastify) {
     if (!isValidTask(task)) {
       return reply.code(400).send({
         error: 'invalid_task',
-        message: `Unknown task "${task}". Valid tasks: find_submit_button, detect_captcha, check_page_ready, find_input_fields, detect_vote_result`,
+        message: `Unknown task "${task}". Valid tasks: find_submit_button, detect_captcha, check_page_ready, find_input_fields, detect_vote_result, locate_captcha_checkbox`,
         fallback: true,
       });
     }
@@ -120,6 +120,12 @@ function estimateConfidence(task, parsed) {
       if (parsed.outcome === 'success' || parsed.outcome === 'already_voted') return 0.85;
       if (parsed.outcome === 'unknown') return 0.4;
       return 0.7;
+    case 'locate_captcha_checkbox':
+      if (!parsed.found) return 0.7;
+      if (parsed.checkbox_center_norm && typeof parsed.checkbox_center_norm.x === 'number' && typeof parsed.checkbox_center_norm.y === 'number') {
+        return 0.86;
+      }
+      return 0.6;
     default:
       return 0.5;
   }

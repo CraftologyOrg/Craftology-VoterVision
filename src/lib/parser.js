@@ -41,6 +41,17 @@ const TASK_SCHEMAS = {
       can_retry: false,
     },
   },
+  locate_captcha_checkbox: {
+    required: ['found'],
+    defaults: {
+      found: false,
+      provider_hint: 'unknown',
+      checkbox_center_norm: { x: 0.5, y: 0.5 },
+      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      iframe_hint: false,
+      description: '',
+    },
+  },
 };
 
 function extractJson(raw) {
@@ -95,6 +106,24 @@ function extractFallbackFields(raw, task) {
     else if (lower.includes('already voted')) outcome = 'already_voted';
     else if (lower.includes('ip') && lower.includes('block')) outcome = 'ip_blocked';
     return { outcome, message: raw.slice(0, 200), can_retry: false };
+  }
+  if (task === 'locate_captcha_checkbox') {
+    const found = lower.includes('captcha') || lower.includes('checkbox') || lower.includes('robot') || lower.includes('human');
+    const provider_hint = lower.includes('hcaptcha')
+      ? 'hcaptcha'
+      : lower.includes('recaptcha')
+      ? 'recaptcha'
+      : lower.includes('turnstile')
+      ? 'turnstile'
+      : 'unknown';
+    return {
+      found,
+      provider_hint,
+      checkbox_center_norm: { x: 0.5, y: 0.5 },
+      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      iframe_hint: lower.includes('iframe'),
+      description: raw.slice(0, 200),
+    };
   }
   return null;
 }

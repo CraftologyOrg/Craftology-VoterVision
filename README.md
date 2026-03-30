@@ -26,6 +26,7 @@ The vote engine serializes all vision calls through a class-level promise-chain 
 | `check_page_ready` | Assess if the page is fully loaded and interactive |
 | `find_input_fields` | Find username/player name input fields |
 | `detect_vote_result` | Determine vote outcome after submission |
+| `locate_captcha_checkbox` | Return normalized checkbox coordinates for captcha click attempts |
 
 ## Railway Deployment
 

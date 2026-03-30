@@ -27,6 +27,17 @@ Use one of these positions: "top", "center", "bottom", "unknown".`,
 {"outcome": "success", "message": "the visible text indicating the result", "can_retry": false}
 For outcome use one of: "success", "already_voted", "ip_blocked", "captcha_required", "error", "unknown".
 Set can_retry to true only if the page suggests trying again is possible.`,
+
+  locate_captcha_checkbox: `This is a screenshot of a Minecraft server voting page. Locate the captcha checkbox center as precisely as possible, especially for hCaptcha/reCAPTCHA style "I am human" widgets.
+
+Respond ONLY with JSON in this exact format, no other text:
+{"found": true, "provider_hint": "hcaptcha", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0.4, "y": 0.4, "width": 0.1, "height": 0.1}, "iframe_hint": true, "description": "small checkbox at left of 'I am human'"}
+
+Rules:
+- All coordinate values must be normalized 0..1 relative to the full screenshot.
+- If unsure about provider, set provider_hint to "unknown".
+- If checkbox is not visible, respond with:
+{"found": false, "provider_hint": "unknown", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0, "y": 0, "width": 0, "height": 0}, "iframe_hint": false, "description": "captcha checkbox not visible"}`,
 };
 
 const VALID_TASKS = new Set(Object.keys(PROMPTS));

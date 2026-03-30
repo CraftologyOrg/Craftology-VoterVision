@@ -16,6 +16,7 @@ const TASK_NUM_PREDICT = {
   check_page_ready: 100,
   find_submit_button: 150,
   detect_captcha: 150,
+  locate_captcha_checkbox: 180,
   detect_vote_result: 150,
   find_input_fields: 256,
 };
