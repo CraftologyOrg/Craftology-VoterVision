@@ -28,6 +28,20 @@ Use one of these positions: "top", "center", "bottom", "unknown".`,
 For outcome use one of: "success", "already_voted", "ip_blocked", "captcha_required", "error", "unknown".
 Set can_retry to true only if the page suggests trying again is possible.`,
 
+  confirm_vote: `This is a screenshot taken after an automated vote submission on a Minecraft server voting page. Decide whether the vote should be counted as confirmed for the user's dashboard.
+
+Respond ONLY with JSON in this exact format, no other text:
+{"outcome": "success", "confirmed": true, "message": "visible evidence", "can_retry": false, "interference": "none"}
+
+Rules:
+- Use outcome "success" only when the page visibly says the vote was accepted, recorded, counted, submitted successfully, or thanks the user for voting.
+- Use outcome "already_voted" when the page says the user/player/IP has already voted today, already claimed the vote, must wait until tomorrow, or can vote again later. This counts as confirmed because the vote site recognizes today's vote state.
+- Use outcome "interference" when something is blocking the vote state from being known, such as an unsolved captcha, Cloudflare/Turnstile challenge, modal, network error, loading screen, anti-bot check, disabled submit button, or another required action.
+- Use outcome "failure" when the page clearly says the vote failed, username/player is invalid, captcha was incorrect, submission was rejected, or the vote could not be registered.
+- Use outcome "unknown" only when there is no clear visible evidence.
+- Set confirmed to true only for "success" or "already_voted"; otherwise false.
+- Keep message short and quote or summarize only the visible evidence.`,
+
   locate_captcha_checkbox: `This is a screenshot of a Minecraft server voting page. Locate the captcha checkbox center as precisely as possible, especially for hCaptcha/reCAPTCHA style "I am human" widgets.
 
 Respond ONLY with JSON in this exact format, no other text:

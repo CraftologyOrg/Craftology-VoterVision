@@ -1,7 +1,7 @@
 {
   "name": "vision-backend",
   "version": "1.0.0",
-  "description": "Vision analysis backend using moondream2 via Ollama for vote page understanding",
+  "description": "Vision analysis backend using DeepInfra Qwen models with Ollama fallback",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

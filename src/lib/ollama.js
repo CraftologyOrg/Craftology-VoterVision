@@ -18,11 +18,17 @@ const TASK_NUM_PREDICT = {
   detect_captcha: 150,
   locate_captcha_checkbox: 180,
   detect_vote_result: 150,
+  confirm_vote: 180,
   find_input_fields: 256,
 };
 const TASK_TIMEOUT_MS = {
   locate_captcha_checkbox: Math.min(12000, TIMEOUT_MS),
 };
+
+function timeoutSignal(ms, upstreamSignal) {
+  if (!upstreamSignal) return AbortSignal.timeout(ms);
+  return AbortSignal.any([upstreamSignal, AbortSignal.timeout(ms)]);
+}
 
 const cache = new Map();
 function enforceCacheLimit() {
@@ -101,7 +107,7 @@ export async function warmupModel() {
   }
 }
 
-export async function queryModel(prompt, screenshotB64, task) {
+export async function queryModel(prompt, screenshotB64, task, signal) {
   const key = cacheKey(task, prompt, screenshotB64);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
@@ -130,7 +136,7 @@ export async function queryModel(prompt, screenshotB64, task) {
           num_predict: TASK_NUM_PREDICT[task] ?? 256,
         },
       }),
-      signal: AbortSignal.timeout(requestTimeoutMs),
+      signal: timeoutSignal(requestTimeoutMs, signal),
     });
 
     if (!resp.ok) {

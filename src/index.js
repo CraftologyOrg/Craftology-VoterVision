@@ -3,8 +3,8 @@ import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import supabasePlugin from './plugins/supabase.js';
 import authPlugin from './middleware/auth.js';
-import analyzeRoutes from './routes/analyze.js';
-import { checkModelAvailable, isModelReady, warmupModel } from './lib/ollama.js';
+import analyzeRoutes, { visionQueue } from './routes/analyze.js';
+import { checkProvidersAvailable, getVisionStatus, isVisionReady, warmupModel } from './lib/visionModel.js';
 
 const fastify = Fastify({
   logger: true,
@@ -43,27 +43,28 @@ await fastify.register(analyzeRoutes);
 fastify.get('/live', {
   config: { skipAuth: true, rateLimit: false },
 }, async () => {
-  const ready = isModelReady();
-  return { status: 'ok', model: 'moondream2', ready };
+  const vision = getVisionStatus();
+  return { status: 'ok', ready: vision.ready, vision, queue: visionQueue.stats() };
 });
 
 // Backward compatibility alias.
 fastify.get('/health', {
   config: { skipAuth: true, rateLimit: false },
 }, async () => {
-  const ready = isModelReady();
-  return { status: 'ok', model: 'moondream2', ready };
+  const vision = getVisionStatus();
+  return { status: 'ok', ready: vision.ready, vision, queue: visionQueue.stats() };
 });
 
 fastify.get('/ready', {
   config: { skipAuth: true, rateLimit: false },
 }, async (_request, reply) => {
   // Probe dependency availability directly; do not depend on user traffic.
-  const available = await checkModelAvailable();
-  if (!available || !isModelReady()) {
-    return reply.code(503).send({ status: 'not_ready', model: 'moondream2', ready: false });
+  const available = await checkProvidersAvailable();
+  const vision = getVisionStatus();
+  if (!available || !isVisionReady()) {
+    return reply.code(503).send({ status: 'not_ready', ready: false, vision, queue: visionQueue.stats() });
   }
-  return { status: 'ready', model: 'moondream2', ready: true };
+  return { status: 'ready', ready: true, vision, queue: visionQueue.stats() };
 });
 
 const port = parseInt(process.env.PORT) || 3000;
@@ -80,18 +81,19 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 try {
   await fastify.listen({ port, host: '0.0.0.0' });
 
-  const available = await checkModelAvailable();
+  const available = await checkProvidersAvailable();
   if (available) {
-    fastify.log.info('moondream2 model is available and ready');
-    warmupModel().then(() => fastify.log.info('moondream2 warmup complete'))
+    fastify.log.info(getVisionStatus(), 'Vision providers are available');
+    warmupModel().then(() => fastify.log.info('Ollama fallback warmup complete'))
                   .catch(() => {});
   } else {
-    fastify.log.warn('moondream2 model is not yet available — requests will return model_unavailable until it is pulled');
+    fastify.log.warn(getVisionStatus(), 'No vision provider is available — requests will return model_unavailable');
   }
 
   const STATUS_INTERVAL_MS = 2 * 60 * 1000;
   setInterval(async () => {
-    const ollamaAvailable = await checkModelAvailable();
+    await checkProvidersAvailable();
+    const vision = getVisionStatus();
 
     let supabaseStatus = 'unknown';
     const supabaseUrl = process.env.SUPABASE_URL;
@@ -110,7 +112,7 @@ try {
       supabaseStatus = 'not configured';
     }
 
-    fastify.log.info({ ollama: ollamaAvailable ? 'available' : 'unavailable', supabase: supabaseStatus }, 'Service status');
+    fastify.log.info({ vision, queue: visionQueue.stats(), supabase: supabaseStatus }, 'Service status');
   }, STATUS_INTERVAL_MS).unref();
 } catch (err) {
   fastify.log.error(err);

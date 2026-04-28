@@ -41,6 +41,16 @@ const TASK_SCHEMAS = {
       can_retry: false,
     },
   },
+  confirm_vote: {
+    required: ['outcome', 'confirmed'],
+    defaults: {
+      outcome: 'unknown',
+      confirmed: false,
+      message: '',
+      can_retry: false,
+      interference: 'none',
+    },
+  },
   locate_captcha_checkbox: {
     required: ['found'],
     defaults: {
@@ -107,6 +117,20 @@ function extractFallbackFields(raw, task) {
     else if (lower.includes('ip') && lower.includes('block')) outcome = 'ip_blocked';
     return { outcome, message: raw.slice(0, 200), can_retry: false };
   }
+  if (task === 'confirm_vote') {
+    let outcome = 'unknown';
+    if (lower.includes('already voted') || lower.includes('vote again') || lower.includes('tomorrow')) outcome = 'already_voted';
+    else if (lower.includes('success') || lower.includes('thank') || lower.includes('counted') || lower.includes('recorded')) outcome = 'success';
+    else if (lower.includes('captcha') || lower.includes('cloudflare') || lower.includes('turnstile') || lower.includes('loading')) outcome = 'interference';
+    else if (lower.includes('failed') || lower.includes('invalid') || lower.includes('rejected') || lower.includes('error')) outcome = 'failure';
+    return {
+      outcome,
+      confirmed: outcome === 'success' || outcome === 'already_voted',
+      message: raw.slice(0, 200),
+      can_retry: outcome === 'interference' || outcome === 'unknown',
+      interference: outcome === 'interference' ? 'visible blocker' : 'none',
+    };
+  }
   if (task === 'locate_captcha_checkbox') {
     const found = lower.includes('captcha') || lower.includes('checkbox') || lower.includes('robot') || lower.includes('human');
     const provider_hint = lower.includes('hcaptcha')
@@ -145,6 +169,12 @@ export function parseResponse(raw, task) {
   }
 
   const result = { ...schema.defaults, ...parsed };
+  if (task === 'confirm_vote') {
+    result.outcome = normalizeConfirmOutcome(result.outcome);
+    result.confirmed = result.outcome === 'success' || result.outcome === 'already_voted'
+      ? Boolean(result.confirmed)
+      : false;
+  }
 
   const missing = schema.required.filter(k => result[k] === undefined);
   if (missing.length > 0) {
@@ -152,4 +182,13 @@ export function parseResponse(raw, task) {
   }
 
   return result;
+}
+
+function normalizeConfirmOutcome(outcome) {
+  const value = String(outcome || '').toLowerCase();
+  if (value === 'success') return 'success';
+  if (value === 'already_voted' || value === 'already-voted' || value === 'already voted') return 'already_voted';
+  if (value === 'interference' || value === 'captcha_required' || value === 'blocked' || value === 'ip_blocked') return 'interference';
+  if (value === 'failure' || value === 'failed' || value === 'error') return 'failure';
+  return 'unknown';
 }
