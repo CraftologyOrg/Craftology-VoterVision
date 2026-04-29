@@ -43,6 +43,12 @@ function createRequestAbortSignal(request) {
   return controller.signal;
 }
 
+function getMaxPendingForRequest(request) {
+  const tierCap = Number(request.entitlements?.maxCaptchaSlotsPerDevice ?? 0);
+  if (!Number.isFinite(tierCap) || tierCap < 1) return undefined;
+  return Math.min(1000, Math.floor(tierCap));
+}
+
 export default async function analyzeRoutes(fastify) {
   fastify.post('/analyze', {
     config: {
@@ -55,6 +61,12 @@ export default async function analyzeRoutes(fastify) {
     },
     schema: { body: BODY_SCHEMA },
   }, async (request, reply) => {
+    if (!request.entitlements?.tier) {
+      return reply.code(403).send({
+        error: 'License is not valid for Autovoter vision',
+        code: 'TIER_NOT_ALLOWED',
+      });
+    }
     const { screenshot, task, context } = request.body;
     const start = Date.now();
 
@@ -82,6 +94,8 @@ export default async function analyzeRoutes(fastify) {
           parseResponse,
           signal: requestSignal,
         });
+      }, {
+        maxPendingPerUser: getMaxPendingForRequest(request),
       });
     } catch (err) {
       if (err instanceof QueueError) {
@@ -163,6 +177,12 @@ export default async function analyzeRoutes(fastify) {
     },
     schema: { body: CONFIRM_BODY_SCHEMA },
   }, async (request, reply) => {
+    if (!request.entitlements?.tier) {
+      return reply.code(403).send({
+        error: 'License is not valid for Autovoter vision',
+        code: 'TIER_NOT_ALLOWED',
+      });
+    }
     const { screenshot, username, siteUrl, checkpoint, totalCheckpoints, elapsedMs, context } = request.body;
     const task = 'confirm_vote';
     const start = Date.now();
@@ -190,6 +210,8 @@ export default async function analyzeRoutes(fastify) {
           parseResponse,
           signal: requestSignal,
         });
+      }, {
+        maxPendingPerUser: getMaxPendingForRequest(request),
       });
     } catch (err) {
       if (err instanceof QueueError) {

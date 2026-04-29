@@ -25,16 +25,18 @@ const authPlugin = async (fastify) => {
 
     const captchaToken = request.headers['captcha-token'];
     const hwid = request.headers['hwid'];
+    const normalizedHwid = hwid != null ? String(hwid).trim().toLowerCase() : '';
 
     if (!captchaToken || !hwid) {
       return reply.code(401).send({ error: 'Missing Captcha-Token or HWID header' });
     }
 
-    const cacheKey = `${captchaToken}:${hwid}`;
+    const cacheKey = `${captchaToken}:${normalizedHwid}`;
     const cached = tokenCache.get(cacheKey);
     if (cached && cached.cacheExpiresAt > Date.now()) {
       request.user = cached.user;
       request.license = cached.license;
+      request.entitlements = cached.entitlements;
       return;
     }
 
@@ -67,7 +69,8 @@ const authPlugin = async (fastify) => {
       return reply.code(401).send({ error: 'Invalid or expired token' });
     }
 
-    if (tokenRow.hwid !== hwid) {
+    const tokenHwid = tokenRow.hwid != null ? String(tokenRow.hwid).trim().toLowerCase() : '';
+    if (tokenHwid !== normalizedHwid) {
       return reply.code(403).send({ error: 'HWID mismatch' });
     }
 
@@ -85,15 +88,39 @@ const authPlugin = async (fastify) => {
       return reply.code(403).send({ error: 'License has expired' });
     }
 
+    const { data: product, error: productError } = await fastify.supabase
+      .from('products')
+      .select('autovoter_tier,tier_max_sessions_per_hwid')
+      .eq('name', license.product_name)
+      .maybeSingle();
+    if (productError || !product?.autovoter_tier) {
+      return reply.code(403).send({ error: 'License is not valid for Autovoter vision' });
+    }
+
+    const tierSlug = String(product.autovoter_tier).trim().toLowerCase();
+    const rawSlots = Number(product.tier_max_sessions_per_hwid);
+    const maxCaptchaSlotsPerDevice = Math.max(
+      1,
+      Math.min(
+        1000,
+        Number.isFinite(rawSlots) ? Math.floor(rawSlots) : 50,
+      ),
+    );
+
     const user = { id: license.user_id };
+    const entitlements = {
+      tier: tierSlug,
+      maxCaptchaSlotsPerDevice,
+    };
 
     const tokenExpiry = new Date(tokenRow.expires_at).getTime();
     const cacheExpiresAt = Math.min(Date.now() + CACHE_TTL_MS, tokenExpiry);
-    tokenCache.set(cacheKey, { user, license, cacheExpiresAt });
+    tokenCache.set(cacheKey, { user, license, entitlements, cacheExpiresAt });
     enforceCacheLimit();
 
     request.user = user;
     request.license = license;
+    request.entitlements = entitlements;
   });
 };
 

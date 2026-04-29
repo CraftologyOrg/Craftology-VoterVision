@@ -71,12 +71,15 @@ export class VisionRequestQueue {
     this.limiter = new GlobalLimiter(globalConcurrency);
   }
 
-  enqueue(userKey, job) {
+  enqueue(userKey, job, options = {}) {
     const key = String(userKey || 'anonymous');
     const state = this.users.get(key) || { queue: [], running: false };
+    const maxPendingForRequest = Number.isFinite(Number(options.maxPendingPerUser))
+      ? Math.max(1, Math.floor(Number(options.maxPendingPerUser)))
+      : this.maxPendingPerUser;
     const pending = state.queue.length + (state.running ? 1 : 0);
 
-    if (pending >= this.maxPendingPerUser) {
+    if (pending >= maxPendingForRequest) {
       throw new QueueError('queue_full', 'Too many pending vision requests for this user', 429);
     }
 
