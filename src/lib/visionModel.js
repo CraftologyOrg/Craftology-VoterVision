@@ -34,6 +34,7 @@ const TASK_MAX_TOKENS = {
   detect_vote_result: 384,
   confirm_vote: 512,
   find_input_fields: 768,
+  classify_vote_failure: 640,
 };
 
 const cache = new Map();

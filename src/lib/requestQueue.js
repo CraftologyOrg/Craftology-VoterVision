@@ -9,7 +9,10 @@ class QueueError extends Error {
 
 class GlobalLimiter {
   constructor(concurrency) {
-    this.concurrency = Math.max(1, concurrency);
+    this.concurrency =
+      concurrency === Infinity || !Number.isFinite(concurrency) || concurrency <= 0
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(1, Math.floor(concurrency));
     this.active = 0;
     this.waiters = [];
   }
@@ -59,119 +62,88 @@ class GlobalLimiter {
   }
 }
 
+/**
+ * Parallel vision: many in-flight model runs per license/HWID up to maxPendingPerUser
+ * (tier `tier_max_sessions_per_hwid`). GlobalLimiter caps total concurrent runs **on this process
+ * for all tenants** (raise for many users × parallel tabs; `0`/`-1` env = unlimited here).
+ */
 export class VisionRequestQueue {
   constructor({
-    globalConcurrency = 4,
-    maxPendingPerUser = 8,
+    globalConcurrency = 4096,
+    maxPendingPerUser = 128,
     queueTimeoutMs = 30000,
   } = {}) {
     this.maxPendingPerUser = Math.max(1, maxPendingPerUser);
     this.queueTimeoutMs = Math.max(1000, queueTimeoutMs);
-    this.users = new Map();
+    this.pendingByUser = new Map();
     this.limiter = new GlobalLimiter(globalConcurrency);
+  }
+
+  _incUser(key) {
+    this.pendingByUser.set(key, (this.pendingByUser.get(key) || 0) + 1);
+  }
+
+  _decUser(key) {
+    const n = (this.pendingByUser.get(key) || 1) - 1;
+    if (n <= 0) this.pendingByUser.delete(key);
+    else this.pendingByUser.set(key, n);
+  }
+
+  _pendingForUser(key) {
+    return this.pendingByUser.get(key) || 0;
   }
 
   enqueue(userKey, job, options = {}) {
     const key = String(userKey || 'anonymous');
-    const state = this.users.get(key) || { queue: [], running: false };
     const maxPendingForRequest = Number.isFinite(Number(options.maxPendingPerUser))
       ? Math.max(1, Math.floor(Number(options.maxPendingPerUser)))
       : this.maxPendingPerUser;
-    const pending = state.queue.length + (state.running ? 1 : 0);
 
-    if (pending >= maxPendingForRequest) {
+    if (this._pendingForUser(key) >= maxPendingForRequest) {
       throw new QueueError('queue_full', 'Too many pending vision requests for this user', 429);
     }
 
-    this.users.set(key, state);
+    this._incUser(key);
 
     const queuedAt = Date.now();
     const controller = new AbortController();
-    let timeout;
 
-    const promise = new Promise((resolve, reject) => {
-      const item = {
-        job,
-        queuedAt,
-        controller,
-        cancelled: false,
-        resolve,
-        reject,
-      };
-
-      timeout = setTimeout(() => {
-        item.cancelled = true;
+    return (async () => {
+      const slotTimer = setTimeout(() => {
         controller.abort();
-        reject(new QueueError('queue_timeout', 'Vision queue wait timed out', 503));
-        this.processUser(key);
       }, this.queueTimeoutMs);
 
-      item.clearTimer = () => clearTimeout(timeout);
-      state.queue.push(item);
-      this.processUser(key);
-    });
+      let release;
+      try {
+        release = await this.limiter.acquire(controller.signal);
+        clearTimeout(slotTimer);
 
-    return promise;
-  }
-
-  processUser(key) {
-    const state = this.users.get(key);
-    if (!state || state.running) return;
-
-    const item = state.queue.shift();
-    if (!item) {
-      this.users.delete(key);
-      return;
-    }
-
-    if (item.cancelled) {
-      item.clearTimer();
-      this.processUser(key);
-      return;
-    }
-
-    state.running = true;
-
-    this.runItem(key, state, item).catch(() => {
-      // Errors are delivered to the request promise; this keeps the queue worker alive.
-    });
-  }
-
-  async runItem(key, state, item) {
-    let release;
-    try {
-      release = await this.limiter.acquire(item.controller.signal);
-      item.clearTimer();
-
-      const startedAt = Date.now();
-      const result = await item.job({
-        queueWaitMs: startedAt - item.queuedAt,
-        queuedAt: item.queuedAt,
-        startedAt,
-      });
-      item.resolve(result);
-    } catch (err) {
-      item.reject(err);
-    } finally {
-      if (release) release();
-      item.clearTimer();
-      state.running = false;
-      if (state.queue.length === 0 && this.users.get(key) === state) {
-        this.users.delete(key);
-      } else {
-        this.processUser(key);
+        const startedAt = Date.now();
+        return await job({
+          queueWaitMs: startedAt - queuedAt,
+          queuedAt,
+          startedAt,
+        });
+      } catch (err) {
+        if (err instanceof QueueError) throw err;
+        if (controller.signal.aborted) {
+          throw new QueueError('queue_timeout', 'Vision queue wait timed out', 503);
+        }
+        throw err;
+      } finally {
+        clearTimeout(slotTimer);
+        if (release) release();
+        this._decUser(key);
       }
-    }
+    })();
   }
 
   stats() {
     let pending = 0;
-    for (const state of this.users.values()) {
-      pending += state.queue.length + (state.running ? 1 : 0);
-    }
+    for (const n of this.pendingByUser.values()) pending += n;
 
     return {
-      users: this.users.size,
+      users: this.pendingByUser.size,
       pending,
       max_pending_per_user: this.maxPendingPerUser,
       queue_timeout_ms: this.queueTimeoutMs,
@@ -180,10 +152,17 @@ export class VisionRequestQueue {
   }
 }
 
+function parseConcurrencyEnv(raw, fallback) {
+  const n = parseInt(raw, 10);
+  if (n === 0 || n === -1) return Number.MAX_SAFE_INTEGER;
+  if (Number.isFinite(n) && n > 0) return n;
+  return fallback;
+}
+
 export function createVisionQueueFromEnv() {
   return new VisionRequestQueue({
-    globalConcurrency: parseInt(process.env.VISION_GLOBAL_CONCURRENCY, 10) || 4,
-    maxPendingPerUser: parseInt(process.env.VISION_QUEUE_MAX_PENDING_PER_USER, 10) || 8,
+    globalConcurrency: parseConcurrencyEnv(process.env.VISION_GLOBAL_CONCURRENCY, 4096),
+    maxPendingPerUser: parseInt(process.env.VISION_QUEUE_MAX_PENDING_PER_USER, 10) || 128,
     queueTimeoutMs: parseInt(process.env.VISION_QUEUE_TIMEOUT_MS, 10) || 30000,
   });
 }

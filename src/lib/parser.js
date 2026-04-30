@@ -62,6 +62,15 @@ const TASK_SCHEMAS = {
       description: '',
     },
   },
+  classify_vote_failure: {
+    required: ['category', 'summary'],
+    defaults: {
+      category: 'other',
+      summary: '',
+      evidence_quote: '',
+      suggested_autovoter_failure_type: 'UNKNOWN',
+    },
+  },
 };
 
 function extractJson(raw) {
@@ -149,6 +158,20 @@ function extractFallbackFields(raw, task) {
       description: raw.slice(0, 200),
     };
   }
+  if (task === 'classify_vote_failure') {
+    let category = 'other';
+    if (lower.includes('already voted') || lower.includes('vote again') || lower.includes('tomorrow') || lower.includes('cooldown')) category = 'already_voted';
+    else if (lower.includes('captcha') || lower.includes('robot') || lower.includes('turnstile') || lower.includes('hcaptcha')) category = 'captcha_failed';
+    else if (lower.includes('ip') && (lower.includes('block') || lower.includes('banned'))) category = 'ip_blocked';
+    else if (lower.includes('timeout') || lower.includes('connection') || lower.includes('network') || lower.includes('load')) category = 'network_or_load';
+    else if (lower.includes('error') || lower.includes('500') || lower.includes('404')) category = 'site_error';
+    return {
+      category,
+      summary: raw.slice(0, 400),
+      evidence_quote: '',
+      suggested_autovoter_failure_type: 'UNKNOWN',
+    };
+  }
   return null;
 }
 
@@ -175,6 +198,12 @@ export function parseResponse(raw, task) {
       ? Boolean(result.confirmed)
       : false;
   }
+  if (task === 'classify_vote_failure') {
+    result.category = normalizeFailureCategory(result.category);
+    result.summary = String(result.summary || '').slice(0, 8000);
+    result.evidence_quote = String(result.evidence_quote || '').slice(0, 2000);
+    result.suggested_autovoter_failure_type = normalizeSuggestedFailureType(result.suggested_autovoter_failure_type);
+  }
 
   const missing = schema.required.filter(k => result[k] === undefined);
   if (missing.length > 0) {
@@ -191,4 +220,39 @@ function normalizeConfirmOutcome(outcome) {
   if (value === 'interference' || value === 'captcha_required' || value === 'blocked' || value === 'ip_blocked') return 'interference';
   if (value === 'failure' || value === 'failed' || value === 'error') return 'failure';
   return 'unknown';
+}
+
+const FAILURE_CATEGORIES = new Set([
+  'already_voted',
+  'captcha_failed',
+  'step_missing',
+  'site_error',
+  'network_or_load',
+  'ip_blocked',
+  'other',
+]);
+
+function normalizeFailureCategory(category) {
+  const v = String(category || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (FAILURE_CATEGORIES.has(v)) return v;
+  return 'other';
+}
+
+const SUGGESTED_FAILURE_TYPES = new Set([
+  'PROXY_BLOCKED',
+  'CAPTCHA_UNSOLVED',
+  'CAPTCHA_UNSOLVABLE',
+  'CAPTCHA_REJECTED',
+  'PAGE_LOAD_FAILED',
+  'PAGE_CLOSED',
+  'FORM_ERROR',
+  'VOTE_REJECTED',
+  'IP_RELATED',
+  'UNKNOWN',
+]);
+
+function normalizeSuggestedFailureType(raw) {
+  const u = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (SUGGESTED_FAILURE_TYPES.has(u)) return u;
+  return 'UNKNOWN';
 }

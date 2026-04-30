@@ -10,7 +10,7 @@ Electron Vote Engine  ──POST /analyze──▶  VisionBackend  ──chat/co
                                          Supabase auth
                                     (Captcha-Token + HWID)
                                               │
-                                     Per-user FIFO queue
+                                     Parallel queue (tier cap + global limit)
                                               │
                                      Ollama final fallback
 ```
@@ -31,7 +31,7 @@ DeepInfra uses the OpenAI-compatible endpoint at `https://api.deepinfra.com/v1/o
 
 ### Backend Queue
 
-The backend serializes requests per authenticated user (`request.user.id`, then license id, HWID, then IP). Different users can still run concurrently up to `VISION_GLOBAL_CONCURRENCY`. Queue pressure is bounded by `VISION_QUEUE_MAX_PENDING_PER_USER`, and requests that wait too long return `503 queue_timeout` instead of hanging.
+Licensed `/analyze` requests run **in parallel** per queue key (license id / HWID), up to **`tier_max_sessions_per_hwid`** from entitlements (passed as `maxPendingPerUser`). A **global** cap `VISION_GLOBAL_CONCURRENCY` (default **4096**; shared by **all** users on the instance; `0` or `-1` = unlimited in Node) limits concurrent model runs on the process. If too many are in flight for one identity, the API returns `429 queue_full`. Waiting for a global slot longer than `VISION_QUEUE_TIMEOUT_MS` returns `503 queue_timeout`. When tier is missing, `VISION_QUEUE_MAX_PENDING_PER_USER` (default 128) applies as fallback.
 
 ## Supported Tasks
 
@@ -98,9 +98,11 @@ The backend serializes requests per authenticated user (`request.user.id`, then 
 | `VISION_CACHE_TTL_MS`               | No       | Response cache TTL in ms (default: 30000)                        |
 | `VISION_TIMEOUT_MS`                 | No       | Default provider timeout in ms (default: 20000)                  |
 | `DEEPINFRA_TIMEOUT_MS`              | No       | DeepInfra request timeout in ms (default: `VISION_TIMEOUT_MS`)   |
-| `VISION_GLOBAL_CONCURRENCY`         | No       | Maximum concurrent backend vision jobs across users (default: 4) |
-| `VISION_QUEUE_MAX_PENDING_PER_USER` | No       | Maximum queued/running vision requests per user (default: 8)     |
-| `VISION_QUEUE_TIMEOUT_MS`           | No       | Maximum time a request may wait before starting (default: 30000) |
+| `VISION_GLOBAL_CONCURRENCY`         | No       | Max concurrent model runs **all tenants** on this process (default: 4096; `0`/`-1` = unlimited) |
+| `VISION_QUEUE_MAX_PENDING_PER_USER` | No       | Fallback max in-flight per key when tier unknown (default: 128)   |
+| `VISION_QUEUE_TIMEOUT_MS`           | No       | Max wait for a global slot before `503` (default: 30000)          |
+| `VISION_ANALYZE_RATE_LIMIT_PER_MIN` | No       | Fastify `/analyze` req/min per license (default: 6000)            |
+| `VISION_CONFIRM_RATE_LIMIT_PER_MIN` | No       | Fastify `/confirm-vote` req/min per license (default: 6000)       |
 | `AUTH_CACHE_TTL_MS`                 | No       | Auth token cache TTL in ms (default: 300000)                     |
 
 

@@ -52,6 +52,24 @@ Rules:
 - If unsure about provider, set provider_hint to "unknown".
 - If checkbox is not visible, respond with:
 {"found": false, "provider_hint": "unknown", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0, "y": 0, "width": 0, "height": 0}, "iframe_hint": false, "description": "captcha checkbox not visible"}`,
+
+  classify_vote_failure: `You are analyzing why an automated Minecraft server list vote failed. You receive a screenshot of the browser and optional additional context that may include a truncated HTML excerpt, the target vote URL, the player username, the autovoter's coarse failure-type hint, and the client's error message.
+
+Classify the primary reason the vote did not succeed. Use the screenshot as primary evidence; use HTML/text only as supporting evidence.
+
+Respond ONLY with JSON in this exact format, no other text:
+{"category": "other", "summary": "one or two sentences explaining the failure", "evidence_quote": "short visible text from the page if any", "suggested_autovoter_failure_type": "UNKNOWN"}
+
+Rules for "category" (pick the single best match):
+- "already_voted" — user/player already voted, come back tomorrow, cooldown, limit reached in a vote-success sense.
+- "captcha_failed" — captcha incorrect, unsolved, invalid, verification failed, bot check failed.
+- "step_missing" — required field/button/step not present or not completed (e.g. missing submit, wrong stage).
+- "site_error" — site returned an error page, 4xx/5xx style message, maintenance, generic server error.
+- "network_or_load" — blank page, timeout, connection error, endless loading, TLS/proxy style page errors visible in UI.
+- "ip_blocked" — IP/geo/VPN blocked or rate limited by the vote site.
+- "other" — none of the above clearly fit.
+
+For "suggested_autovoter_failure_type", echo the closest Autovoter enum string if inferable: PROXY_BLOCKED, CAPTCHA_UNSOLVED, CAPTCHA_UNSOLVABLE, CAPTCHA_REJECTED, PAGE_LOAD_FAILED, PAGE_CLOSED, FORM_ERROR, VOTE_REJECTED, IP_RELATED, UNKNOWN. If unsure, use UNKNOWN.`,
 };
 
 const VALID_TASKS = new Set(Object.keys(PROMPTS));
@@ -61,7 +79,7 @@ export function getPrompt(task, context) {
   const base = PROMPTS[task];
   if (!base) return null;
   if (context) {
-    return `${base}\nAdditional context: ${context}`;
+    return `${base}\n\nAdditional context:\n${context}`;
   }
   return base;
 }

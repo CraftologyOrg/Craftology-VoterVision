@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { getPrompt, isValidTask, VALID_TASK_LIST } from '../lib/prompts.js';
 import { parseResponse } from '../lib/parser.js';
 import { createVisionQueueFromEnv, QueueError } from '../lib/requestQueue.js';
@@ -18,6 +19,12 @@ const BODY_SCHEMA = {
     },
     task: { type: 'string', enum: VALID_TASK_LIST },
     context: { type: 'string', maxLength: 1024 },
+    page_html: { type: 'string', maxLength: 120000 },
+    target_url: { type: 'string', maxLength: 2048 },
+    account_username: { type: 'string', maxLength: 128 },
+    autovoter_failure_type: { type: 'string', maxLength: 64 },
+    client_error_message: { type: 'string', maxLength: 4000 },
+    attempt_id: { type: 'string', maxLength: 128 },
   },
   additionalProperties: false,
 };
@@ -43,18 +50,18 @@ function createRequestAbortSignal(request) {
   return controller.signal;
 }
 
+/** Max queued+running vision jobs per license/HWID — equals `products.tier_max_sessions_per_hwid` from auth entitlements. */
 function getMaxPendingForRequest(request) {
   const tierCap = Number(request.entitlements?.maxCaptchaSlotsPerDevice ?? 0);
   if (!Number.isFinite(tierCap) || tierCap < 1) return undefined;
-  return Math.min(1000, Math.floor(tierCap));
+  return Math.max(1, Math.floor(tierCap));
 }
 
 export default async function analyzeRoutes(fastify) {
   fastify.post('/analyze', {
     config: {
-      // Expensive endpoint: keep much tighter than global limiter.
       rateLimit: {
-        max: 120,
+        max: parseInt(process.env.VISION_ANALYZE_RATE_LIMIT_PER_MIN, 10) || 6000,
         timeWindow: '1 minute',
         keyGenerator: (request) => request.user?.id || request.license?.id || request.ip,
       },
@@ -67,7 +74,17 @@ export default async function analyzeRoutes(fastify) {
         code: 'TIER_NOT_ALLOWED',
       });
     }
-    const { screenshot, task, context } = request.body;
+    const {
+      screenshot,
+      task,
+      context,
+      page_html: pageHtml,
+      target_url: targetUrl,
+      account_username: accountUsername,
+      autovoter_failure_type: autovoterFailureType,
+      client_error_message: clientErrorMessage,
+      attempt_id: attemptId,
+    } = request.body;
     const start = Date.now();
 
     if (!isValidTask(task)) {
@@ -78,7 +95,19 @@ export default async function analyzeRoutes(fastify) {
       });
     }
 
-    const prompt = getPrompt(task, context);
+    const promptContext = task === 'classify_vote_failure'
+      ? buildClassifyVoteFailureContext({
+        context,
+        pageHtml,
+        targetUrl,
+        accountUsername,
+        autovoterFailureType,
+        clientErrorMessage,
+        attemptId,
+      })
+      : context;
+
+    const prompt = getPrompt(task, promptContext);
     const queueKey = getQueueKey(request);
     const requestSignal = createRequestAbortSignal(request);
 
@@ -151,26 +180,45 @@ export default async function analyzeRoutes(fastify) {
       provider: modelResult.provider,
       model: modelResult.model,
       attempts: summarizeAttempts(modelResult.attempts),
-      confidence: parsed.confidence,
+      confidence: parsed.confidence ?? estimateConfidence(task, parsed),
     }, 'Vision analysis complete');
+
+    const confidence = estimateConfidence(task, parsed);
+
+    let persistMeta = {};
+    if (task === 'classify_vote_failure') {
+      persistMeta = await persistClassifiedFailedVote(fastify, request, {
+        parsed,
+        modelResult,
+        screenshot,
+        targetUrl,
+        accountUsername,
+        autovoterFailureType,
+        clientErrorMessage,
+        attemptId,
+        pageHtml,
+        confidence,
+      });
+    }
 
     return {
       task,
       result: parsed,
-      confidence: estimateConfidence(task, parsed),
-      reasoning: parsed.description || parsed.reason || parsed.message || '',
+      confidence,
+      reasoning: parsed.description || parsed.reason || parsed.message || parsed.summary || '',
       provider: modelResult.provider,
       model: modelResult.model,
       latency_ms: latencyMs,
       queue_wait_ms: queueWaitMs,
       cached: modelResult.cached,
+      ...persistMeta,
     };
   });
 
   fastify.post('/confirm-vote', {
     config: {
       rateLimit: {
-        max: 180,
+        max: parseInt(process.env.VISION_CONFIRM_RATE_LIMIT_PER_MIN, 10) || 6000,
         timeWindow: '1 minute',
         keyGenerator: (request) => request.user?.id || request.license?.id || request.ip,
       },
@@ -279,6 +327,116 @@ export default async function analyzeRoutes(fastify) {
   });
 }
 
+function buildClassifyVoteFailureContext({
+  context,
+  pageHtml,
+  targetUrl,
+  accountUsername,
+  autovoterFailureType,
+  clientErrorMessage,
+  attemptId,
+}) {
+  const lines = [];
+  if (context) lines.push(String(context));
+  if (targetUrl) lines.push(`Autovoter target URL: ${targetUrl}`);
+  if (accountUsername) lines.push(`Minecraft username: ${accountUsername}`);
+  if (autovoterFailureType) lines.push(`Autovoter failure type hint: ${autovoterFailureType}`);
+  if (clientErrorMessage) lines.push(`Client error: ${clientErrorMessage}`);
+  if (attemptId) lines.push(`Attempt id: ${attemptId}`);
+  const meta = lines.join('\n').slice(0, 4000);
+  const html = pageHtml ? String(pageHtml).slice(0, 80000) : '';
+  const htmlBlock = html ? `\n\nPage HTML excerpt:\n${html}` : '';
+  return (meta + htmlBlock).slice(0, 120000);
+}
+
+async function persistClassifiedFailedVote(fastify, request, {
+  parsed,
+  modelResult,
+  screenshot,
+  targetUrl,
+  accountUsername,
+  autovoterFailureType,
+  clientErrorMessage,
+  attemptId,
+  pageHtml,
+  confidence,
+}) {
+  const license = request.license;
+  if (!license?.id) {
+    request.log.warn('classify_vote_failure persist skipped — no license id');
+    return { stored: false };
+  }
+
+  const bucket = process.env.FAILED_VOTES_BUCKET || 'failed-vote-screenshots';
+  const objectId = randomUUID();
+  const storagePath = `${license.id}/${objectId}.png`;
+
+  let b64 = String(screenshot || '')
+    .replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
+    .replace(/\s/g, '');
+  let buffer;
+  try {
+    buffer = Buffer.from(b64, 'base64');
+  } catch (e) {
+    request.log.error(e, 'classify_vote_failure: invalid screenshot base64');
+    return { stored: false };
+  }
+  if (!buffer.length) {
+    request.log.warn('classify_vote_failure: empty screenshot buffer');
+    return { stored: false };
+  }
+
+  const { error: uploadErr } = await fastify.supabase.storage
+    .from(bucket)
+    .upload(storagePath, buffer, {
+      contentType: 'image/png',
+      upsert: false,
+    });
+
+  if (uploadErr) {
+    request.log.error(uploadErr, 'failed_votes storage upload failed');
+    return { stored: false };
+  }
+
+  const htmlSnippet = pageHtml ? String(pageHtml).slice(0, 96000) : null;
+  const fullStorageRef = `${bucket}/${storagePath}`;
+
+  const row = {
+    license_id: license.id,
+    user_id: license.user_id ?? null,
+    target_url: targetUrl || null,
+    account_username: accountUsername || null,
+    autovoter_failure_type: autovoterFailureType || null,
+    client_error_message: clientErrorMessage ? String(clientErrorMessage).slice(0, 4000) : null,
+    attempt_id: attemptId || null,
+    vision_category: parsed.category || 'other',
+    vision_summary: (parsed.summary || '').slice(0, 8000),
+    vision_confidence: confidence,
+    vision_model: modelResult.model || null,
+    vision_provider: modelResult.provider || null,
+    vision_raw: { ...parsed },
+    html_snippet: htmlSnippet,
+    screenshot_storage_path: fullStorageRef,
+  };
+
+  const { data: inserted, error: insertErr } = await fastify.supabase
+    .from('failed_votes')
+    .insert(row)
+    .select('id')
+    .single();
+
+  if (insertErr) {
+    request.log.error(insertErr, 'failed_votes table insert failed');
+    return { stored: false, screenshot_storage_path: fullStorageRef };
+  }
+
+  return {
+    stored: true,
+    failed_vote_id: inserted?.id ?? null,
+    screenshot_storage_path: fullStorageRef,
+  };
+}
+
 function getQueueKey(request) {
   return request.user?.id || request.license?.id || request.headers.hwid || request.ip;
 }
@@ -335,6 +493,10 @@ function estimateConfidence(task, parsed) {
         return 0.86;
       }
       return 0.6;
+    case 'classify_vote_failure':
+      if (parsed.summary && parsed.summary.length > 20 && parsed.category && parsed.category !== 'other') return 0.82;
+      if (parsed.summary && parsed.summary.length > 12) return 0.68;
+      return 0.45;
     default:
       return 0.5;
   }
