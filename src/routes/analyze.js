@@ -349,6 +349,30 @@ function buildClassifyVoteFailureContext({
   return (meta + htmlBlock).slice(0, 120000);
 }
 
+/** Cooldown / already-voted outcomes are synced locally by the Autovoter — do not store as failed_votes. */
+function shouldSkipFailedVotePersist(parsed) {
+  const cat = String(parsed.category || '').toLowerCase().trim();
+  if (cat === 'already_voted') return true;
+  const s = String(parsed.summary || '').toLowerCase();
+  const eq = String(parsed.evidence_quote || '').toLowerCase();
+  const blob = `${s}\n${eq}`;
+  const hints = [
+    'already voted',
+    'you voted today',
+    'you have voted today',
+    'you have already voted',
+    'vote again in',
+    'you can vote again',
+    'try again in',
+    'voted today',
+    'come back tomorrow',
+    'return tomorrow',
+    'must wait until',
+    'cooldown',
+  ];
+  return hints.some((h) => blob.includes(h));
+}
+
 async function persistClassifiedFailedVote(fastify, request, {
   parsed,
   modelResult,
@@ -361,6 +385,18 @@ async function persistClassifiedFailedVote(fastify, request, {
   pageHtml,
   confidence,
 }) {
+  if (shouldSkipFailedVotePersist(parsed)) {
+    request.log.info({
+      category: parsed.category,
+      targetUrl,
+    }, 'classify_vote_failure: cooldown/already_voted — skipping failed_votes persistence');
+    return {
+      stored: false,
+      skipped_reason: 'cooldown_or_already_voted',
+      cooldown_persist_skipped: true,
+    };
+  }
+
   const license = request.license;
   if (!license?.id) {
     request.log.warn('classify_vote_failure persist skipped — no license id');
@@ -493,6 +529,12 @@ function estimateConfidence(task, parsed) {
         return 0.86;
       }
       return 0.6;
+    case 'locate_consent_checkbox':
+      if (!parsed.found) return 0.7;
+      if (parsed.checkbox_center_norm && typeof parsed.checkbox_center_norm.x === 'number' && typeof parsed.checkbox_center_norm.y === 'number') {
+        return 0.84;
+      }
+      return 0.58;
     case 'classify_vote_failure':
       if (parsed.summary && parsed.summary.length > 20 && parsed.category && parsed.category !== 'other') return 0.82;
       if (parsed.summary && parsed.summary.length > 12) return 0.68;

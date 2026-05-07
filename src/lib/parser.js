@@ -39,6 +39,8 @@ const TASK_SCHEMAS = {
       outcome: 'unknown',
       message: '',
       can_retry: false,
+      cooldown_until_iso: '',
+      cooldown_remaining_seconds: null,
     },
   },
   confirm_vote: {
@@ -62,6 +64,17 @@ const TASK_SCHEMAS = {
       description: '',
     },
   },
+  locate_consent_checkbox: {
+    required: ['found'],
+    defaults: {
+      found: false,
+      provider_hint: 'unknown',
+      checkbox_center_norm: { x: 0.5, y: 0.5 },
+      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      iframe_hint: false,
+      description: '',
+    },
+  },
   classify_vote_failure: {
     required: ['category', 'summary'],
     defaults: {
@@ -69,6 +82,8 @@ const TASK_SCHEMAS = {
       summary: '',
       evidence_quote: '',
       suggested_autovoter_failure_type: 'UNKNOWN',
+      cooldown_until_iso: '',
+      cooldown_remaining_seconds: null,
     },
   },
 };
@@ -158,9 +173,33 @@ function extractFallbackFields(raw, task) {
       description: raw.slice(0, 200),
     };
   }
+  if (task === 'locate_consent_checkbox') {
+    const found =
+      (lower.includes('checkbox') || lower.includes('square')) &&
+      (lower.includes('privacy') ||
+        lower.includes('policy') ||
+        lower.includes('agree') ||
+        lower.includes('terms') ||
+        lower.includes('consent'));
+    return {
+      found,
+      provider_hint: 'consent',
+      checkbox_center_norm: { x: 0.5, y: 0.5 },
+      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      iframe_hint: false,
+      description: raw.slice(0, 200),
+    };
+  }
   if (task === 'classify_vote_failure') {
     let category = 'other';
-    if (lower.includes('already voted') || lower.includes('vote again') || lower.includes('tomorrow') || lower.includes('cooldown')) category = 'already_voted';
+    if (
+      lower.includes('already voted') ||
+      lower.includes('you have voted today') ||
+      lower.includes('you voted today') ||
+      lower.includes('vote again') ||
+      lower.includes('tomorrow') ||
+      lower.includes('cooldown')
+    ) category = 'already_voted';
     else if (lower.includes('captcha') || lower.includes('robot') || lower.includes('turnstile') || lower.includes('hcaptcha')) category = 'captcha_failed';
     else if (lower.includes('ip') && (lower.includes('block') || lower.includes('banned'))) category = 'ip_blocked';
     else if (lower.includes('timeout') || lower.includes('connection') || lower.includes('network') || lower.includes('load')) category = 'network_or_load';
@@ -198,11 +237,21 @@ export function parseResponse(raw, task) {
       ? Boolean(result.confirmed)
       : false;
   }
+  if (task === 'detect_vote_result') {
+    result.cooldown_until_iso = String(result.cooldown_until_iso || '').trim().slice(0, 64);
+    const dcrs = result.cooldown_remaining_seconds;
+    result.cooldown_remaining_seconds =
+      dcrs != null && dcrs !== '' && Number.isFinite(Number(dcrs)) ? Number(dcrs) : null;
+  }
   if (task === 'classify_vote_failure') {
     result.category = normalizeFailureCategory(result.category);
     result.summary = String(result.summary || '').slice(0, 8000);
     result.evidence_quote = String(result.evidence_quote || '').slice(0, 2000);
     result.suggested_autovoter_failure_type = normalizeSuggestedFailureType(result.suggested_autovoter_failure_type);
+    result.cooldown_until_iso = String(result.cooldown_until_iso || '').trim().slice(0, 64);
+    const ccrs = result.cooldown_remaining_seconds;
+    result.cooldown_remaining_seconds =
+      ccrs != null && ccrs !== '' && Number.isFinite(Number(ccrs)) ? Number(ccrs) : null;
   }
 
   const missing = schema.required.filter(k => result[k] === undefined);

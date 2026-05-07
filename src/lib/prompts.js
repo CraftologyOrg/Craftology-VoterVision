@@ -24,9 +24,13 @@ If no input fields are visible, respond with: {"fields": []}
 Use one of these positions: "top", "center", "bottom", "unknown".`,
 
   detect_vote_result: `This is a screenshot of a Minecraft server voting page after a vote was submitted. Determine the outcome of the vote. Look for success messages, error messages, "already voted" notices, IP blocks, or captcha requirements. Respond ONLY with JSON in this exact format, no other text:
-{"outcome": "success", "message": "the visible text indicating the result", "can_retry": false}
+{"outcome": "success", "message": "the visible text indicating the result", "can_retry": false, "cooldown_until_iso": "", "cooldown_remaining_seconds": null}
 For outcome use one of: "success", "already_voted", "ip_blocked", "captcha_required", "error", "unknown".
-Set can_retry to true only if the page suggests trying again is possible.`,
+Set can_retry to true only if the page suggests trying again is possible.
+When outcome is "already_voted" (or the page shows a countdown until the user may vote again), extract timing:
+- Set cooldown_remaining_seconds to the total seconds until voting is allowed again if the page states it clearly (e.g. timer like "4h 59m" → seconds).
+- OR set cooldown_until_iso to an ISO-8601 UTC timestamp if an absolute date/time is shown.
+If timing cannot be read reliably, use cooldown_remaining_seconds: null and cooldown_until_iso: "".`,
 
   confirm_vote: `This is a screenshot taken after an automated vote submission on a Minecraft server voting page. Decide whether the vote should be counted as confirmed for the user's dashboard.
 
@@ -53,12 +57,26 @@ Rules:
 - If checkbox is not visible, respond with:
 {"found": false, "provider_hint": "unknown", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0, "y": 0, "width": 0, "height": 0}, "iframe_hint": false, "description": "captcha checkbox not visible"}`,
 
+  locate_consent_checkbox: `This is a screenshot of a Minecraft server voting page. Locate the small HTML checkbox the user must tick to agree to the site's Privacy Policy, Terms of Service, or similar legal consent ("I agree...", "I agree to ... Privacy Policy").
+
+This is NOT an hCaptcha/reCAPTCHA/Cloudflare widget — look for a normal square checkbox next to legal/consent text near the vote form.
+
+Respond ONLY with JSON in this exact format, no other text:
+{"found": true, "provider_hint": "consent", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0.4, "y": 0.4, "width": 0.1, "height": 0.1}, "iframe_hint": false, "description": "unchecked square left of privacy policy text"}
+
+Rules:
+- All coordinate values must be normalized 0..1 relative to the full screenshot.
+- Aim for the center of the square checkbox, not the hyperlink text.
+- provider_hint is usually "consent".
+- If no such consent checkbox is visible, respond with:
+{"found": false, "provider_hint": "unknown", "checkbox_center_norm": {"x": 0.5, "y": 0.5}, "checkbox_bbox_norm": {"x": 0, "y": 0, "width": 0, "height": 0}, "iframe_hint": false, "description": "no consent checkbox visible"}`,
+
   classify_vote_failure: `You are analyzing why an automated Minecraft server list vote failed. You receive a screenshot of the browser and optional additional context that may include a truncated HTML excerpt, the target vote URL, the player username, the autovoter's coarse failure-type hint, and the client's error message.
 
 Classify the primary reason the vote did not succeed. Use the screenshot as primary evidence; use HTML/text only as supporting evidence.
 
 Respond ONLY with JSON in this exact format, no other text:
-{"category": "other", "summary": "one or two sentences explaining the failure", "evidence_quote": "short visible text from the page if any", "suggested_autovoter_failure_type": "UNKNOWN"}
+{"category": "other", "summary": "one or two sentences explaining the failure", "evidence_quote": "short visible text from the page if any", "suggested_autovoter_failure_type": "UNKNOWN", "cooldown_until_iso": "", "cooldown_remaining_seconds": null}
 
 Rules for "category" (pick the single best match):
 - "already_voted" — user/player already voted, come back tomorrow, cooldown, limit reached in a vote-success sense.
@@ -69,7 +87,9 @@ Rules for "category" (pick the single best match):
 - "ip_blocked" — IP/geo/VPN blocked or rate limited by the vote site.
 - "other" — none of the above clearly fit.
 
-For "suggested_autovoter_failure_type", echo the closest Autovoter enum string if inferable: PROXY_BLOCKED, CAPTCHA_UNSOLVED, CAPTCHA_UNSOLVABLE, CAPTCHA_REJECTED, PAGE_LOAD_FAILED, PAGE_CLOSED, FORM_ERROR, VOTE_REJECTED, IP_RELATED, UNKNOWN. If unsure, use UNKNOWN.`,
+For "suggested_autovoter_failure_type", echo the closest Autovoter enum string if inferable: PROXY_BLOCKED, CAPTCHA_UNSOLVED, CAPTCHA_UNSOLVABLE, CAPTCHA_REJECTED, PAGE_LOAD_FAILED, PAGE_CLOSED, FORM_ERROR, VOTE_REJECTED, IP_RELATED, UNKNOWN. If unsure, use UNKNOWN.
+
+When category is "already_voted" or the page shows when voting is allowed again, fill cooldown_remaining_seconds (total seconds until eligible) and/or cooldown_until_iso (ISO-8601 UTC). Leave both empty/null if timing cannot be read.`,
 };
 
 const VALID_TASKS = new Set(Object.keys(PROMPTS));

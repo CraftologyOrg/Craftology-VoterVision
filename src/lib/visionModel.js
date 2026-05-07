@@ -31,6 +31,7 @@ const TASK_MAX_TOKENS = {
   find_submit_button: 384,
   detect_captcha: 384,
   locate_captcha_checkbox: 512,
+  locate_consent_checkbox: 512,
   detect_vote_result: 384,
   confirm_vote: 512,
   find_input_fields: 768,
