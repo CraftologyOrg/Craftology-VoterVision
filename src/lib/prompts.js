@@ -27,10 +27,12 @@ Use one of these positions: "top", "center", "bottom", "unknown".`,
 {"outcome": "success", "message": "the visible text indicating the result", "can_retry": false, "cooldown_until_iso": "", "cooldown_remaining_seconds": null}
 For outcome use one of: "success", "already_voted", "ip_blocked", "captcha_required", "error", "unknown".
 Set can_retry to true only if the page suggests trying again is possible.
-When outcome is "already_voted" (or the page shows a countdown until the user may vote again), extract timing:
-- Set cooldown_remaining_seconds to the total seconds until voting is allowed again if the page states it clearly (e.g. timer like "4h 59m" → seconds).
-- OR set cooldown_until_iso to an ISO-8601 UTC timestamp if an absolute date/time is shown.
-If timing cannot be read reliably, use cooldown_remaining_seconds: null and cooldown_until_iso: "".`,
+Cooldown timing (strict):
+- Set cooldown_remaining_seconds and/or cooldown_until_iso ONLY when the screenshot shows a visible countdown, timer, or explicit wait duration (e.g. "vote again in 4h 59m", "12 hours", a live timer).
+- For generic "already voted" / "someone has already voted" messages with NO visible timer or duration, leave cooldown_remaining_seconds: null and cooldown_until_iso: "".
+- Do NOT infer timing from URL IDs, server names, banners, ads, or unrelated numbers on the page.
+- Maximum cooldown is 24 hours (86400 seconds). Never return more than that.
+If timing cannot be read reliably from a visible duration, use cooldown_remaining_seconds: null and cooldown_until_iso: "".`,
 
   confirm_vote: `This is a screenshot taken after an automated vote submission on a Minecraft server voting page. Decide whether the vote should be counted as confirmed for the user's dashboard.
 
@@ -89,7 +91,10 @@ Rules for "category" (pick the single best match):
 
 For "suggested_autovoter_failure_type", echo the closest Autovoter enum string if inferable: PROXY_BLOCKED, CAPTCHA_UNSOLVED, CAPTCHA_UNSOLVABLE, CAPTCHA_REJECTED, PAGE_LOAD_FAILED, PAGE_CLOSED, FORM_ERROR, VOTE_REJECTED, IP_RELATED, UNKNOWN. If unsure, use UNKNOWN.
 
-When category is "already_voted" or the page shows when voting is allowed again, fill cooldown_remaining_seconds (total seconds until eligible) and/or cooldown_until_iso (ISO-8601 UTC). Leave both empty/null if timing cannot be read.`,
+Cooldown timing (strict, same as detect_vote_result):
+- Fill cooldown_remaining_seconds and/or cooldown_until_iso ONLY when the screenshot shows a visible countdown, timer, or explicit wait duration.
+- For generic "already voted" messages with no timer, leave both empty/null.
+- Do NOT infer timing from URL IDs, banners, or unrelated numbers. Maximum cooldown is 24 hours (86400 seconds).`,
 };
 
 const VALID_TASKS = new Set(Object.keys(PROMPTS));

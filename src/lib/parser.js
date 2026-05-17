@@ -1,3 +1,5 @@
+import { sanitizeCooldownFields } from './cooldownSanitize.js';
+
 const TASK_SCHEMAS = {
   find_submit_button: {
     required: ['found'],
@@ -242,6 +244,7 @@ export function parseResponse(raw, task) {
     const dcrs = result.cooldown_remaining_seconds;
     result.cooldown_remaining_seconds =
       dcrs != null && dcrs !== '' && Number.isFinite(Number(dcrs)) ? Number(dcrs) : null;
+    sanitizeCooldownFields(result);
   }
   if (task === 'classify_vote_failure') {
     result.category = normalizeFailureCategory(result.category);
@@ -252,6 +255,7 @@ export function parseResponse(raw, task) {
     const ccrs = result.cooldown_remaining_seconds;
     result.cooldown_remaining_seconds =
       ccrs != null && ccrs !== '' && Number.isFinite(Number(ccrs)) ? Number(ccrs) : null;
+    sanitizeCooldownFields(result);
   }
 
   const missing = schema.required.filter(k => result[k] === undefined);
