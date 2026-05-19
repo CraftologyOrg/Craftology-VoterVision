@@ -521,6 +521,7 @@ function estimateConfidence(task, parsed) {
       return 0.7;
     case 'confirm_vote':
       if (parsed.outcome === 'success' || parsed.outcome === 'already_voted') return parsed.message ? 0.92 : 0.82;
+      if (parsed.outcome === 'processing') return parsed.wait_seconds != null ? 0.88 : 0.8;
       if (parsed.outcome === 'interference' || parsed.outcome === 'failure') return parsed.message ? 0.84 : 0.7;
       return 0.35;
     case 'locate_captcha_checkbox':

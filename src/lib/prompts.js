@@ -37,12 +37,13 @@ If timing cannot be read reliably from a visible duration, use cooldown_remainin
   confirm_vote: `This is a screenshot taken after an automated vote submission on a Minecraft server voting page. Decide whether the vote should be counted as confirmed for the user's dashboard.
 
 Respond ONLY with JSON in this exact format, no other text:
-{"outcome": "success", "confirmed": true, "message": "visible evidence", "can_retry": false, "interference": "none"}
+{"outcome": "success", "confirmed": true, "message": "visible evidence", "can_retry": false, "interference": "none", "wait_seconds": null}
 
 Rules:
-- Use outcome "success" only when the page visibly says the vote was accepted, recorded, counted, submitted successfully, or thanks the user for voting.
+- Use outcome "success" only when the page visibly says the vote was accepted, recorded, counted, submitted successfully, or thanks the user for voting (e.g. "SUCCESS", "vote has been successfully sent").
 - Use outcome "already_voted" when the page says the user/player/IP has already voted today, already claimed the vote, must wait until tomorrow, or can vote again later. This counts as confirmed because the vote site recognizes today's vote state.
-- Use outcome "interference" when something is blocking the vote state from being known, such as an unsolved captcha, Cloudflare/Turnstile challenge, modal, network error, loading screen, anti-bot check, disabled submit button, or another required action.
+- Use outcome "processing" when the vote is still in progress: visible countdown/timer, progress bar, "processing your vote", "hang on", "please wait", "do not close this tab", a mostly blank/white page right after submit with no final message yet, or similar — WITHOUT a final success or failure message yet. Set confirmed false, can_retry true, interference "processing_modal", and wait_seconds to the best visible countdown (1-60) or null if unknown.
+- Do NOT use "interference" for that in-progress processing state. Reserve outcome "interference" for blockers: unsolved captcha, Cloudflare/Turnstile challenge blocking submit, network error, anti-bot check, disabled submit, or another required action before the vote can complete.
 - Use outcome "failure" when the page clearly says the vote failed, username/player is invalid, captcha was incorrect, submission was rejected, or the vote could not be registered.
 - Use outcome "unknown" only when there is no clear visible evidence.
 - Set confirmed to true only for "success" or "already_voted"; otherwise false.

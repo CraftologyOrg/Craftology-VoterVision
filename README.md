@@ -43,7 +43,7 @@ Licensed `/analyze` requests run **in parallel** per queue key (license id / HWI
 | `check_page_ready`        | Assess if the page is fully loaded and interactive                                |
 | `find_input_fields`       | Find username/player name input fields                                            |
 | `detect_vote_result`      | Determine vote outcome after submission                                           |
-| `confirm_vote`            | Dedicated post-submit confirmation for success/already-voted/interference/failure |
+| `confirm_vote`            | Post-submit confirmation: success / already_voted / **processing** (wait modal) / interference / failure |
 | `locate_captcha_checkbox` | Return normalized checkbox coordinates for captcha click attempts                 |
 
 
@@ -180,7 +180,7 @@ npm run dev
 
 ### POST /confirm-vote
 
-Dedicated vote confirmation endpoint used by the autovoter after submitting a vote. The app captures several screenshots around 5 seconds apart and sends each checkpoint here. `success` and `already_voted` both return `confirmed: true`; `interference`, `failure`, and `unknown` do not.
+Dedicated vote confirmation endpoint used by the autovoter after submitting a vote. The app sends multiple checkpoints while a post-submit processing modal may be visible. `success` and `already_voted` return `confirmed: true`. `processing` returns `confirmed: false`, `can_retry: true`, optional `wait_seconds`, and `interference: "processing_modal"` — the autovoter waits and re-polls until success or timeout. `interference` is reserved for real blockers (captcha, etc.), not in-progress vote timers.
 
 **Headers:**
 

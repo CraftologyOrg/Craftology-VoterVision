@@ -53,6 +53,7 @@ const TASK_SCHEMAS = {
       message: '',
       can_retry: false,
       interference: 'none',
+      wait_seconds: null,
     },
   },
   locate_captcha_checkbox: {
@@ -147,14 +148,26 @@ function extractFallbackFields(raw, task) {
     let outcome = 'unknown';
     if (lower.includes('already voted') || lower.includes('vote again') || lower.includes('tomorrow')) outcome = 'already_voted';
     else if (lower.includes('success') || lower.includes('thank') || lower.includes('counted') || lower.includes('recorded')) outcome = 'success';
-    else if (lower.includes('captcha') || lower.includes('cloudflare') || lower.includes('turnstile') || lower.includes('loading')) outcome = 'interference';
+    else if (
+      lower.includes('hang on') ||
+      lower.includes('processing your vote') ||
+      lower.includes('do not close this tab') ||
+      lower.includes('do not close the tab') ||
+      (lower.includes('processing') && (lower.includes('please wait') || /\d{1,2}\s*s\b/.test(lower)))
+    ) outcome = 'processing';
+    else if (lower.includes('captcha') || lower.includes('cloudflare') || lower.includes('turnstile')) outcome = 'interference';
     else if (lower.includes('failed') || lower.includes('invalid') || lower.includes('rejected') || lower.includes('error')) outcome = 'failure';
+    const waitMatch = lower.match(/(\d{1,2})\s*s\b/);
+    const wait_seconds = outcome === 'processing' && waitMatch
+      ? Math.min(60, Math.max(1, parseInt(waitMatch[1], 10)))
+      : null;
     return {
       outcome,
       confirmed: outcome === 'success' || outcome === 'already_voted',
       message: raw.slice(0, 200),
-      can_retry: outcome === 'interference' || outcome === 'unknown',
-      interference: outcome === 'interference' ? 'visible blocker' : 'none',
+      can_retry: outcome === 'processing' || outcome === 'interference' || outcome === 'unknown',
+      interference: outcome === 'processing' ? 'processing_modal' : outcome === 'interference' ? 'visible blocker' : 'none',
+      wait_seconds,
     };
   }
   if (task === 'locate_captcha_checkbox') {
@@ -235,9 +248,20 @@ export function parseResponse(raw, task) {
   const result = { ...schema.defaults, ...parsed };
   if (task === 'confirm_vote') {
     result.outcome = normalizeConfirmOutcome(result.outcome);
-    result.confirmed = result.outcome === 'success' || result.outcome === 'already_voted'
-      ? Boolean(result.confirmed)
-      : false;
+    const ws = result.wait_seconds;
+    result.wait_seconds =
+      ws != null && ws !== '' && Number.isFinite(Number(ws)) ? Math.min(60, Math.max(1, Math.round(Number(ws)))) : null;
+    if (result.outcome === 'processing') {
+      result.confirmed = false;
+      result.can_retry = true;
+      if (!result.interference || result.interference === 'none') {
+        result.interference = 'processing_modal';
+      }
+    } else {
+      result.confirmed = result.outcome === 'success' || result.outcome === 'already_voted'
+        ? Boolean(result.confirmed)
+        : false;
+    }
   }
   if (task === 'detect_vote_result') {
     result.cooldown_until_iso = String(result.cooldown_until_iso || '').trim().slice(0, 64);
@@ -270,6 +294,7 @@ function normalizeConfirmOutcome(outcome) {
   const value = String(outcome || '').toLowerCase();
   if (value === 'success') return 'success';
   if (value === 'already_voted' || value === 'already-voted' || value === 'already voted') return 'already_voted';
+  if (value === 'processing' || value === 'in_progress' || value === 'in progress') return 'processing';
   if (value === 'interference' || value === 'captcha_required' || value === 'blocked' || value === 'ip_blocked') return 'interference';
   if (value === 'failure' || value === 'failed' || value === 'error') return 'failure';
   return 'unknown';
