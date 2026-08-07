@@ -13,6 +13,9 @@ const TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS, 10) || 20000;
 const DEEPINFRA_TIMEOUT_MS = parseInt(process.env.DEEPINFRA_TIMEOUT_MS, 10) || TIMEOUT_MS;
 const CACHE_TTL_MS = parseInt(process.env.VISION_CACHE_TTL_MS, 10) || 30000;
 const CACHE_MAX_ENTRIES = parseInt(process.env.VISION_CACHE_MAX_ENTRIES, 10) || 500;
+/** Skip DeepInfra models that recently failed hard (timeout / unavailable / rate limit). */
+const UNHEALTHY_SKIP_MS = parseInt(process.env.DEEPINFRA_UNHEALTHY_SKIP_MS, 10) || 5 * 60 * 1000;
+const UNHEALTHY_ERRORS = new Set(['timeout', 'model_unavailable', 'rate_limited', 'empty_response']);
 
 const DEFAULT_DEEPINFRA_MODELS = [
   'Qwen/Qwen3-VL-235B-A22B-Instruct',
@@ -58,6 +61,16 @@ function setProviderState(provider, model, patch) {
     ...providerState.get(key),
     ...patch,
   });
+}
+
+/** Fail-fast: skip DeepInfra models marked unhealthy for UNHEALTHY_SKIP_MS. */
+function isProviderUnhealthy(provider, model) {
+  if (provider !== 'deepinfra') return false;
+  const state = providerState.get(providerKey(provider, model));
+  if (!state?.lastErrorAt || !state.lastError) return false;
+  if (!UNHEALTHY_ERRORS.has(state.lastError)) return false;
+  if ((state.lastSuccessAt || 0) > state.lastErrorAt) return false;
+  return Date.now() - state.lastErrorAt < UNHEALTHY_SKIP_MS;
 }
 
 function enforceCacheLimit() {
@@ -211,6 +224,21 @@ export async function analyzeWithProviderFallback({ prompt, screenshot, task, pa
         fallback: true,
         attempts,
       };
+    }
+
+    if (isProviderUnhealthy(provider.provider, provider.model)) {
+      const state = providerState.get(providerKey(provider.provider, provider.model)) || {};
+      const remainingMs = Math.max(0, UNHEALTHY_SKIP_MS - (Date.now() - (state.lastErrorAt || 0)));
+      const skipped = {
+        provider: provider.provider,
+        model: provider.model,
+        error: 'skipped_unhealthy',
+        message: `Skipping unhealthy DeepInfra model for ~${Math.ceil(remainingMs / 60000)}m (last_error=${state.lastError || 'unknown'})`,
+        latencyMs: 0,
+      };
+      attempts.push(skipped);
+      lastError = skipped;
+      continue;
     }
 
     if (provider.provider === 'ollama' && !isOllamaReady()) {

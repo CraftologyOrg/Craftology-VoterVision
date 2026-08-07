@@ -373,6 +373,18 @@ function shouldSkipFailedVotePersist(parsed) {
   return hints.some((h) => blob.includes(h));
 }
 
+/** Extract a lowercase hostname from a vote URL for analytics (`failed_votes.host`). */
+function deriveHostFromUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return null;
+  try {
+    return new URL(/^[a-zA-Z]+:\/\//.test(s) ? s : `https://${s}`).hostname.toLowerCase() || null;
+  } catch {
+    const m = s.match(/^[a-zA-Z]+:\/\/([^/:?#]+)/) || s.match(/^([^/:?#]+)/);
+    return m ? m[1].toLowerCase() : null;
+  }
+}
+
 async function persistClassifiedFailedVote(fastify, request, {
   parsed,
   modelResult,
@@ -441,6 +453,7 @@ async function persistClassifiedFailedVote(fastify, request, {
     license_id: license.id,
     user_id: license.user_id ?? null,
     target_url: targetUrl || null,
+    host: deriveHostFromUrl(targetUrl),
     account_username: accountUsername || null,
     autovoter_failure_type: autovoterFailureType || null,
     client_error_message: clientErrorMessage ? String(clientErrorMessage).slice(0, 4000) : null,

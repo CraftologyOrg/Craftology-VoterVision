@@ -171,7 +171,7 @@ function extractFallbackFields(raw, task) {
     };
   }
   if (task === 'locate_captcha_checkbox') {
-    const found = lower.includes('captcha') || lower.includes('checkbox') || lower.includes('robot') || lower.includes('human');
+    // Text fallback has no real geometry — never invent a center click target.
     const provider_hint = lower.includes('hcaptcha')
       ? 'hcaptcha'
       : lower.includes('recaptcha')
@@ -180,27 +180,21 @@ function extractFallbackFields(raw, task) {
       ? 'turnstile'
       : 'unknown';
     return {
-      found,
+      found: false,
       provider_hint,
-      checkbox_center_norm: { x: 0.5, y: 0.5 },
-      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      checkbox_center_norm: null,
+      checkbox_bbox_norm: null,
       iframe_hint: lower.includes('iframe'),
       description: raw.slice(0, 200),
     };
   }
   if (task === 'locate_consent_checkbox') {
-    const found =
-      (lower.includes('checkbox') || lower.includes('square')) &&
-      (lower.includes('privacy') ||
-        lower.includes('policy') ||
-        lower.includes('agree') ||
-        lower.includes('terms') ||
-        lower.includes('consent'));
+    // Text fallback has no real geometry — never invent a center click target.
     return {
-      found,
+      found: false,
       provider_hint: 'consent',
-      checkbox_center_norm: { x: 0.5, y: 0.5 },
-      checkbox_bbox_norm: { x: 0, y: 0, width: 0, height: 0 },
+      checkbox_center_norm: null,
+      checkbox_bbox_norm: null,
       iframe_hint: false,
       description: raw.slice(0, 200),
     };
@@ -246,6 +240,17 @@ export function parseResponse(raw, task) {
   }
 
   const result = { ...schema.defaults, ...parsed };
+  if (task === 'locate_captcha_checkbox' || task === 'locate_consent_checkbox') {
+    // Reject locate_* without real geometry — do not keep found=true with default/fake center.
+    if (result.found && !hasRealLocateGeometry(parsed) && !hasRealLocateGeometry(result)) {
+      result.found = false;
+    }
+    if (!result.found || !hasRealLocateGeometry(result)) {
+      result.found = false;
+      result.checkbox_center_norm = { ...schema.defaults.checkbox_center_norm };
+      result.checkbox_bbox_norm = { ...schema.defaults.checkbox_bbox_norm };
+    }
+  }
   if (task === 'confirm_vote') {
     result.outcome = normalizeConfirmOutcome(result.outcome);
     const ws = result.wait_seconds;
@@ -288,6 +293,27 @@ export function parseResponse(raw, task) {
   }
 
   return result;
+}
+
+/** True when the model supplied usable normalized checkbox coordinates. */
+function hasRealLocateGeometry(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  const c = obj.checkbox_center_norm;
+  if (!c || typeof c !== 'object') return false;
+  const x = Number(c.x);
+  const y = Number(c.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return false;
+  const b = obj.checkbox_bbox_norm;
+  const hasBbox =
+    b &&
+    typeof b === 'object' &&
+    Number.isFinite(Number(b.width)) &&
+    Number.isFinite(Number(b.height)) &&
+    (Number(b.width) > 0 || Number(b.height) > 0);
+  // Default center (0.5, 0.5) with empty bbox is invented geometry — reject.
+  if (!hasBbox && x === 0.5 && y === 0.5) return false;
+  return true;
 }
 
 function normalizeConfirmOutcome(outcome) {
