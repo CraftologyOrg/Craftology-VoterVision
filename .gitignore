@@ -25,5 +25,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Local monitor volume fallback
+data/
+
 # Coverage
 coverage/

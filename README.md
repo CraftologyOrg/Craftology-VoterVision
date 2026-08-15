@@ -77,11 +77,18 @@ Licensed `/analyze` requests run **in parallel** per queue key (license id / HWI
   ```bash
    railway up
   ```
-6. **Verify:**
+6. **Attach a volume for the 60-day monitor (required for `/monitor`):**
+   - In the Railway canvas, add a volume to this service.
+   - Mount path: `/data` (Railway will set `RAILWAY_VOLUME_MOUNT_PATH`).
+   - Start around **20 GB**; live-resize later if needed.
+   - Keep **replicas = 1**. Volumes cannot be used with multiple replicas, and a volume also adds a short gap on each redeploy.
+   - Enable volume backups in Railway.
+7. **Verify:**
   ```bash
    curl https://your-visionbackend.railway.app/health
    # Should return status ok plus vision provider and queue state
   ```
+   Open `https://your-visionbackend.railway.app/monitor` and sign in with a Craftology **admin** account (`user_roles.role_name = admin` in the same Supabase project as the website).
 
 ### Environment Variables
 
@@ -90,6 +97,9 @@ Licensed `/analyze` requests run **in parallel** per queue key (license id / HWI
 | ----------------------------------- | -------- | ---------------------------------------------------------------- |
 | `SUPABASE_URL`                      | Yes      | Supabase project URL                                             |
 | `SUPABASE_SERVICE_ROLE_KEY`         | Yes      | Supabase service role key (server-side only)                     |
+| `SUPABASE_ANON_KEY`                 | Yes*     | Same-project anon/publishable key for `/monitor` staff login     |
+| `MONITOR_COOKIE_SECRET`             | No       | Signs the monitor session cookie (defaults to the service role key) |
+| `MONITOR_DATA_DIR`                  | No       | Local override for monitor storage (Railway uses `/data` via volume) |
 | `DEEPINFRA_API_KEY`                 | Yes      | DeepInfra API key used for Qwen vision models                    |
 | `DEEPINFRA_BASE_URL`                | No       | OpenAI-compatible DeepInfra base URL                             |
 | `DEEPINFRA_MODELS`                  | No       | Comma-separated override for the DeepInfra model order           |
@@ -241,6 +251,15 @@ Every **2 minutes** the server logs the status of external dependencies:
 Incoming `/analyze` requests use the backend queue, then try each configured provider in order. Transport errors, timeouts, DeepInfra rate limits, empty responses, and parse failures move to the next provider automatically.
 
 The `/health` endpoint always returns `200` and is never logged, so Railway health checks do not produce log noise.
+
+## Ops dashboard (`/monitor`)
+
+The same Railway service serves a staff dashboard at `/monitor`. Logs, inbound HTTP, outbound network calls, vision attempts, and DeepInfra billing snapshots are stored in SQLite on the attached volume (`/data/monitor/monitor.db`) for **60 days**.
+
+- Sign-in uses Craftology email/password via Supabase Auth. Access is granted only when `user_roles.role_name = admin` (same staff role as the website).
+- Screenshots, `Captcha-Token`, API keys, and other secrets are not stored.
+- Search covers app logs and network payloads. Graphs use 1-minute rollups (hourly when the range is long).
+- DeepInfra balance is polled from `GET /payment/checklist?compute_owed=true` and `GET /payment/usage?from=current` about every 3 minutes.
 
 ## Memory Budget
 

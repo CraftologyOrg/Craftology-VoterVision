@@ -22,6 +22,8 @@ const authPlugin = async (fastify) => {
 
   fastify.addHook('onRequest', async (request, reply) => {
     if (request.routeOptions?.config?.skipAuth) return;
+    const url = request.url || '';
+    if (url === '/monitor' || url.startsWith('/monitor/') || url.startsWith('/monitor?')) return;
 
     const captchaToken = request.headers['captcha-token'];
     const hwid = request.headers['hwid'];

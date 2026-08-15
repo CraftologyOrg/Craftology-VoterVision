@@ -6,6 +6,8 @@ import {
   queryModel as queryOllamaModel,
   warmupModel as warmupOllamaModel,
 } from './ollama.js';
+import { recordNetworkCall } from './monitor/network.js';
+import { stringifySafe, truncate } from './monitor/redact.js';
 
 const DEEPINFRA_BASE_URL = process.env.DEEPINFRA_BASE_URL || 'https://api.deepinfra.com/v1/openai';
 const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || process.env.DEEPINFRA_TOKEN || '';
@@ -140,35 +142,72 @@ function extractDeepInfraContent(data) {
 
 async function queryDeepInfraModel(model, prompt, screenshot, task, signal) {
   const start = Date.now();
-  const resp = await fetch(`${DEEPINFRA_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${DEEPINFRA_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.1,
-      max_tokens: TASK_MAX_TOKENS[task] ?? 512,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: toDataUrl(screenshot) } },
-          ],
-        },
-      ],
-    }),
-    signal: timeoutSignal(DEEPINFRA_TIMEOUT_MS, signal),
+  const url = `${DEEPINFRA_BASE_URL}/chat/completions`;
+  const requestExcerpt = stringifySafe({
+    model,
+    task,
+    max_tokens: TASK_MAX_TOKENS[task] ?? 512,
+    temperature: 0.1,
+    has_image: true,
   });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${DEEPINFRA_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: TASK_MAX_TOKENS[task] ?? 512,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: toDataUrl(screenshot) } },
+            ],
+          },
+        ],
+      }),
+      signal: timeoutSignal(DEEPINFRA_TIMEOUT_MS, signal),
+    });
+  } catch (err) {
+    recordNetworkCall({
+      service: 'deepinfra',
+      method: 'POST',
+      url,
+      latency_ms: Date.now() - start,
+      model,
+      task,
+      error: err.message || String(err),
+      request_excerpt: requestExcerpt,
+    });
+    throw err;
+  }
+
+  const latencyMs = Date.now() - start;
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
+    recordNetworkCall({
+      service: 'deepinfra',
+      method: 'POST',
+      url,
+      status: resp.status,
+      latency_ms: latencyMs,
+      model,
+      task,
+      error: `HTTP ${resp.status}`,
+      request_excerpt: requestExcerpt,
+      response_excerpt: truncate(text, 1000),
+    });
     return {
       error: resp.status === 429 ? 'rate_limited' : 'model_unavailable',
       message: `DeepInfra ${model} returned ${resp.status}: ${text.slice(0, 300)}`,
-      latencyMs: Date.now() - start,
+      latencyMs,
       retryable: resp.status === 429 || resp.status >= 500 || resp.status === 408,
     };
   }
@@ -176,18 +215,36 @@ async function queryDeepInfraModel(model, prompt, screenshot, task, signal) {
   const data = await resp.json();
   const response = extractDeepInfraContent(data);
 
+  recordNetworkCall({
+    service: 'deepinfra',
+    method: 'POST',
+    url,
+    status: resp.status,
+    latency_ms: latencyMs,
+    model,
+    task,
+    usage: data.usage,
+    error: response ? null : 'empty_response',
+    request_excerpt: requestExcerpt,
+    response_excerpt: stringifySafe({
+      usage: data.usage || null,
+      finish_reason: data.choices?.[0]?.finish_reason || null,
+      content: truncate(response, 800),
+    }),
+  });
+
   if (!response) {
     return {
       error: 'empty_response',
       message: `DeepInfra ${model} returned an empty response`,
-      latencyMs: Date.now() - start,
+      latencyMs,
       retryable: true,
     };
   }
 
   return {
     response,
-    latencyMs: Date.now() - start,
+    latencyMs,
     usage: data.usage,
   };
 }

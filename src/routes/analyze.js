@@ -3,6 +3,7 @@ import { getPrompt, isValidTask, VALID_TASK_LIST } from '../lib/prompts.js';
 import { parseResponse } from '../lib/parser.js';
 import { createVisionQueueFromEnv, QueueError } from '../lib/requestQueue.js';
 import { analyzeWithProviderFallback } from '../lib/visionModel.js';
+import { noteVisionRequest } from '../lib/monitor/ingest.js';
 
 export const visionQueue = createVisionQueueFromEnv();
 
@@ -128,6 +129,12 @@ export default async function analyzeRoutes(fastify) {
       });
     } catch (err) {
       if (err instanceof QueueError) {
+        noteVisionRequest(request, {
+          task,
+          success: false,
+          error: err.code,
+          latencyMs: Date.now() - start,
+        });
         request.log.warn({
           task,
           queueKey,
@@ -143,6 +150,19 @@ export default async function analyzeRoutes(fastify) {
       }
       throw err;
     }
+
+    noteVisionRequest(request, {
+      task,
+      success: !modelResult.error,
+      cached: modelResult.cached,
+      provider: modelResult.provider,
+      model: modelResult.model,
+      latencyMs: modelResult.latencyMs || (Date.now() - start),
+      error: modelResult.error || null,
+      attempts: modelResult.attempts,
+      usage: modelResult.usage,
+      queueWaitMs,
+    });
 
     if (modelResult.error) {
       const timeoutOnFallbackTask = task === 'locate_captcha_checkbox' && modelResult.error === 'timeout';
@@ -263,6 +283,12 @@ export default async function analyzeRoutes(fastify) {
       });
     } catch (err) {
       if (err instanceof QueueError) {
+        noteVisionRequest(request, {
+          task,
+          success: false,
+          error: err.code,
+          latencyMs: Date.now() - start,
+        });
         request.log.warn({
           task,
           queueKey,
@@ -279,6 +305,19 @@ export default async function analyzeRoutes(fastify) {
       }
       throw err;
     }
+
+    noteVisionRequest(request, {
+      task,
+      success: !modelResult.error,
+      cached: modelResult.cached,
+      provider: modelResult.provider,
+      model: modelResult.model,
+      latencyMs: modelResult.latencyMs || (Date.now() - start),
+      error: modelResult.error || null,
+      attempts: modelResult.attempts,
+      usage: modelResult.usage,
+      queueWaitMs,
+    });
 
     if (modelResult.error) {
       request.log.warn({

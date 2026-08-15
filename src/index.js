@@ -1,16 +1,53 @@
 import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import supabasePlugin from './plugins/supabase.js';
 import authPlugin from './middleware/auth.js';
 import analyzeRoutes, { visionQueue } from './routes/analyze.js';
+import monitorRoutes from './routes/monitor.js';
 import { checkProvidersAvailable, getVisionStatus, isVisionReady, warmupModel } from './lib/visionModel.js';
+import { loggedFetch } from './lib/monitor/network.js';
+import {
+  createPinoStream,
+  initMonitor,
+  registerMonitorHttpHook,
+  shutdownMonitor,
+  startMonitorBackground,
+} from './lib/monitor/index.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+initMonitor();
 
 const fastify = Fastify({
-  logger: true,
+  logger: {
+    stream: createPinoStream(),
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["captcha-token"]',
+        'req.headers.hwid',
+        '*.screenshot',
+        '*.page_html',
+        '*.pageHtml',
+        '*.password',
+        '*.access_token',
+        '*.refresh_token',
+      ],
+      censor: '[Redacted]',
+    },
+  },
+  disableRequestLogging: true,
   trustProxy: process.env.TRUST_PROXY === 'true',
   bodyLimit: 10 * 1024 * 1024, // 10MB for base64 screenshots
 });
+
+registerMonitorHttpHook(fastify);
 
 // Production: log promise rejections without tearing down the server (orchestrator can still restart on crash).
 process.on('unhandledRejection', (reason) => {
@@ -23,7 +60,15 @@ process.on('uncaughtException', (err) => {
   fastify
     .close()
     .catch(() => {})
-    .finally(() => process.exit(1));
+    .finally(() => {
+      shutdownMonitor();
+      process.exit(1);
+    });
+});
+
+await fastify.register(cookie, {
+  secret: process.env.MONITOR_COOKIE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-monitor-cookie',
+  hook: 'onRequest',
 });
 
 await fastify.register(rateLimit, {
@@ -37,6 +82,14 @@ await fastify.register(rateLimit, {
 await fastify.register(supabasePlugin);
 await fastify.register(authPlugin);
 await fastify.register(analyzeRoutes);
+await fastify.register(monitorRoutes);
+
+await fastify.register(fastifyStatic, {
+  root: path.join(__dirname, '../public/monitor'),
+  prefix: '/monitor/static/',
+  decorateReply: true,
+  index: false,
+});
 
 // Health check always returns 200 — Railway must not kill the container
 // just because the Ollama sidecar is temporarily unavailable.
@@ -72,6 +125,7 @@ const port = parseInt(process.env.PORT) || 3000;
 const shutdown = async (signal) => {
   fastify.log.info(`Received ${signal} — shutting down gracefully`);
   await fastify.close();
+  shutdownMonitor();
   process.exit(0);
 };
 
@@ -90,6 +144,8 @@ try {
     fastify.log.warn(getVisionStatus(), 'No vision provider is available — requests will return model_unavailable');
   }
 
+  startMonitorBackground(fastify.log);
+
   const STATUS_INTERVAL_MS = 2 * 60 * 1000;
   setInterval(async () => {
     await checkProvidersAvailable();
@@ -100,10 +156,10 @@ try {
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (supabaseUrl && supabaseKey) {
       try {
-        const resp = await fetch(`${supabaseUrl}/rest/v1/`, {
+        const resp = await loggedFetch(`${supabaseUrl}/rest/v1/`, {
           headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
           signal: AbortSignal.timeout(5000),
-        });
+        }, { service: 'supabase', request_meta: { probe: 'status' } });
         supabaseStatus = resp.ok || resp.status < 500 ? 'connected' : 'degraded';
       } catch {
         supabaseStatus = 'unreachable';
@@ -116,5 +172,6 @@ try {
   }, STATUS_INTERVAL_MS).unref();
 } catch (err) {
   fastify.log.error(err);
+  shutdownMonitor();
   process.exit(1);
 }

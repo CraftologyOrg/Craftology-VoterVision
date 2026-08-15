@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import { recordNetworkCall } from './monitor/network.js';
+import { stringifySafe, truncate } from './monitor/redact.js';
 
 const OLLAMA_BASE = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL_PREFIX = 'moondream';
@@ -59,12 +61,22 @@ let modelReady = false;
 let lastSuccessfulModelCallAt = 0;
 
 export async function checkModelAvailable() {
+  const url = `${OLLAMA_BASE}/api/tags`;
+  const start = Date.now();
   try {
-    const resp = await fetch(`${OLLAMA_BASE}/api/tags`, {
+    const resp = await fetch(url, {
       signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) {
       modelReady = false;
+      recordNetworkCall({
+        service: 'ollama',
+        method: 'GET',
+        url,
+        status: resp.status,
+        latency_ms: Date.now() - start,
+        error: `HTTP ${resp.status}`,
+      });
       return false;
     }
     const data = await resp.json();
@@ -72,9 +84,26 @@ export async function checkModelAvailable() {
     const found = models.find(m => m.name && m.name.startsWith(MODEL_PREFIX));
     modelReady = !!found;
     if (found) resolvedModelName = found.name;
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'GET',
+      url,
+      status: resp.status,
+      latency_ms: Date.now() - start,
+      model: found?.name || null,
+      request_excerpt: stringifySafe({ probe: 'tags' }),
+      response_excerpt: stringifySafe({ models: models.map((m) => m.name).slice(0, 20) }),
+    });
     return modelReady;
-  } catch {
+  } catch (err) {
     modelReady = false;
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'GET',
+      url,
+      latency_ms: Date.now() - start,
+      error: err.message || String(err),
+    });
     return false;
   }
 }
@@ -89,8 +118,10 @@ export function getLastSuccessfulModelCallAt() {
 
 export async function warmupModel() {
   if (!modelReady) return;
+  const url = `${OLLAMA_BASE}/api/generate`;
+  const start = Date.now();
   try {
-    await fetch(`${OLLAMA_BASE}/api/generate`, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -102,8 +133,25 @@ export async function warmupModel() {
       }),
       signal: AbortSignal.timeout(30000),
     });
-  } catch {
-    // warmup failure is non-fatal
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'POST',
+      url,
+      status: resp.status,
+      latency_ms: Date.now() - start,
+      model: resolvedModelName,
+      request_excerpt: stringifySafe({ probe: 'warmup', model: resolvedModelName }),
+    });
+  } catch (err) {
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'POST',
+      url,
+      latency_ms: Date.now() - start,
+      model: resolvedModelName,
+      error: err.message || String(err),
+      request_excerpt: stringifySafe({ probe: 'warmup' }),
+    });
   }
 }
 
@@ -120,9 +168,10 @@ export async function queryModel(prompt, screenshotB64, task, signal) {
 
   const start = Date.now();
   const requestTimeoutMs = TASK_TIMEOUT_MS[task] ?? TIMEOUT_MS;
+  const url = `${OLLAMA_BASE}/api/generate`;
 
   try {
-    const resp = await fetch(`${OLLAMA_BASE}/api/generate`, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -141,6 +190,18 @@ export async function queryModel(prompt, screenshotB64, task, signal) {
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
+      recordNetworkCall({
+        service: 'ollama',
+        method: 'POST',
+        url,
+        status: resp.status,
+        latency_ms: Date.now() - start,
+        model: resolvedModelName,
+        task,
+        error: `HTTP ${resp.status}`,
+        request_excerpt: stringifySafe({ model: resolvedModelName, task, num_predict: TASK_NUM_PREDICT[task] ?? 256 }),
+        response_excerpt: truncate(text, 800),
+      });
       if (text.includes('not found') || text.includes('pull')) {
         modelReady = false;
         return { error: 'model_unavailable', message: `${resolvedModelName} not available: ${text.slice(0, 200)}`, fallback: true };
@@ -154,11 +215,33 @@ export async function queryModel(prompt, screenshotB64, task, signal) {
     modelReady = true;
     lastSuccessfulModelCallAt = Date.now();
 
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'POST',
+      url,
+      status: resp.status,
+      latency_ms: latencyMs,
+      model: resolvedModelName,
+      task,
+      request_excerpt: stringifySafe({ model: resolvedModelName, task, num_predict: TASK_NUM_PREDICT[task] ?? 256 }),
+      response_excerpt: truncate(response, 800),
+    });
+
     cache.set(key, { response, expiresAt: Date.now() + CACHE_TTL_MS });
     enforceCacheLimit();
 
     return { response, latencyMs, cached: false };
   } catch (err) {
+    recordNetworkCall({
+      service: 'ollama',
+      method: 'POST',
+      url,
+      latency_ms: Date.now() - start,
+      model: resolvedModelName,
+      task,
+      error: err.message || String(err),
+      request_excerpt: stringifySafe({ model: resolvedModelName, task }),
+    });
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       // Timeout does not imply model is unavailable; keep readiness state as-is.
       return { error: 'timeout', message: `moondream2 did not respond within ${requestTimeoutMs}ms`, fallback: true };
