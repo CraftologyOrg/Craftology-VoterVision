@@ -243,10 +243,7 @@
         <header class="topbar">
           <div class="brand">
             <img class="brand-mark" src="/monitor/static/craftology-mark.png" alt="Craftology" width="28" height="28" />
-            <span>
-              <span class="brand-name">CRAFT//OPS</span>
-              <span class="brand-sub">Vision Monitor</span>
-            </span>
+            <span class="brand-name">Vision backend</span>
           </div>
           <span class="live-dot${state.autoRefresh ? '' : ' off'}" title="${state.autoRefresh ? 'Live' : 'Paused'}"></span>
           <div class="range-chips" role="tablist" aria-label="Time range">
@@ -281,7 +278,7 @@
       ? 'Named staff actions for this dashboard. Click a type to inspect or run it.'
       : state.page === 'api-map'
         ? 'Live route inventory. Staff monitor APIs vs license-token engine APIs are marked. Click a node to filter HTTP in.'
-        : 'Vision Monitor. Admin role required.'}</p>
+        : 'Vision backend. Admin role required.'}</p>
             </div>
           </div>
           ${inner}
@@ -296,8 +293,8 @@
         <form class="login-card" id="login-form">
           <img class="brand-mark login-mark" src="/monitor/static/craftology-mark.png" alt="Craftology" width="48" height="48" />
           <p class="login-kicker">Staff console</p>
-          <h1>Craftology Monitor</h1>
-          <p class="sub">Vision Monitor. Same admin accounts as the Craftology site. Admin role required.</p>
+          <h1>Vision backend</h1>
+          <p class="sub">Vision backend. Same admin accounts as the Craftology site. Admin role required.</p>
           ${error ? `<div class="banner">${esc(error)}</div>` : ''}
           <div class="field">
             <label for="email">Email</label>
