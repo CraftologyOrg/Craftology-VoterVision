@@ -8,9 +8,69 @@
     ['60d', 60 * 86400000],
   ];
 
+  const NAV_PAGES = [
+    ['overview', 'Overview'],
+    ['logs', 'App logs'],
+    ['network', 'Network'],
+    ['http', 'HTTP in'],
+    ['vision', 'Vision'],
+    ['billing', 'DeepInfra'],
+    ['actions', 'Actions'],
+    ['api-map', 'API map'],
+  ];
+
+  const API_ROUTES = [
+    { method: 'GET', path: '/', auth: 'none', action: 'root' },
+    { method: 'GET', path: '/health', auth: 'none', action: 'health' },
+    { method: 'GET', path: '/live', auth: 'none', action: 'health.live' },
+    { method: 'GET', path: '/ready', auth: 'none', action: 'health.ready' },
+    { method: 'POST', path: '/analyze', auth: 'license', action: 'analyze' },
+    { method: 'POST', path: '/confirm-vote', auth: 'license', action: 'confirm_vote' },
+    { method: 'GET', path: '/monitor', auth: 'none', action: 'monitor.spa' },
+    { method: 'POST', path: '/monitor/api/auth/login', auth: 'none', action: 'monitor.auth.login' },
+    { method: 'POST', path: '/monitor/api/auth/logout', auth: 'none', action: 'monitor.auth.logout' },
+    { method: 'GET', path: '/monitor/api/auth/me', auth: 'staff', action: 'monitor.auth.me' },
+    { method: 'GET', path: '/monitor/api/overview', auth: 'staff', action: 'monitor.overview' },
+    { method: 'GET', path: '/monitor/api/series', auth: 'staff', action: 'monitor.series' },
+    { method: 'GET', path: '/monitor/api/logs', auth: 'staff', action: 'monitor.logs' },
+    { method: 'GET', path: '/monitor/api/logs.csv', auth: 'staff', action: 'monitor.logs_csv' },
+    { method: 'GET', path: '/monitor/api/network', auth: 'staff', action: 'monitor.network' },
+    { method: 'GET', path: '/monitor/api/network.csv', auth: 'staff', action: 'monitor.network_csv' },
+    { method: 'GET', path: '/monitor/api/http', auth: 'staff', action: 'monitor.http' },
+    { method: 'GET', path: '/monitor/api/vision', auth: 'staff', action: 'monitor.vision' },
+    { method: 'GET', path: '/monitor/api/facets', auth: 'staff', action: 'monitor.facets' },
+    { method: 'GET', path: '/monitor/api/storage', auth: 'staff', action: 'monitor.storage' },
+    { method: 'GET', path: '/monitor/api/billing', auth: 'staff', action: 'monitor.billing' },
+    { method: 'POST', path: '/monitor/api/billing/refresh', auth: 'staff', action: 'monitor.billing.refresh' },
+    { method: 'GET', path: '/monitor/api/status', auth: 'staff', action: 'monitor.status' },
+  ];
+
+  const STAFF_ACTIONS = [
+    { id: 'refresh-billing', name: 'billing.refresh', label: 'Poll DeepInfra billing', hint: 'POST /monitor/api/billing/refresh — snapshots prepaid balance.', kind: 'run' },
+    { id: 'jump-logs', name: 'nav.logs', label: 'Jump to app logs', hint: 'Open the App logs stream for this range.', kind: 'nav' },
+    { id: 'jump-http', name: 'nav.http', label: 'Jump to inbound HTTP', hint: 'Open license-token engine requests (/analyze, /confirm-vote).', kind: 'nav' },
+    { id: 'jump-network', name: 'nav.network', label: 'Jump to outbound network', hint: 'Open DeepInfra / provider call logs.', kind: 'nav' },
+    { id: 'copy-health', name: 'copy.health', label: 'Copy health URL', hint: 'Clipboard: GET /health (public).', kind: 'copy' },
+    { id: 'copy-live', name: 'copy.live', label: 'Copy live URL', hint: 'Clipboard: GET /live (public).', kind: 'copy' },
+    { id: 'copy-ready', name: 'copy.ready', label: 'Copy ready URL', hint: 'Clipboard: GET /ready (public).', kind: 'copy' },
+    { id: 'logout', name: 'auth.logout', label: 'Sign out', hint: 'Clear the staff session cookie for /monitor.', kind: 'logout' },
+  ];
+
+  function parseLocation() {
+    const raw = (location.hash || '').replace(/^#\/?/, '');
+    const segments = raw.split('/').filter(Boolean);
+    const known = NAV_PAGES.map((p) => p[0]);
+    const page = known.includes(segments[0]) ? segments[0] : 'overview';
+    return { page, detail: segments.slice(1).join('/') };
+  }
+
+  const initialLoc = parseLocation();
   const state = {
     user: null,
-    page: location.hash.replace(/^#\/?/, '') || 'overview',
+    page: initialLoc.page,
+    actionId: initialLoc.page === 'actions' ? initialLoc.detail : '',
+    actionResult: null,
+    apiView: 'wire',
     rangeMs: 24 * 3600000,
     autoRefresh: true,
     facets: { tasks: [], providers: [], models: [], services: [], levels: [] },
@@ -19,7 +79,10 @@
     timer: null,
   };
 
+  const Chrome = window.MonitorChrome;
+
   const app = document.getElementById('app');
+  let omni = null;
 
   function qs(params) {
     const to = Date.now();
@@ -99,7 +162,7 @@
     const pad = { l: 44, r: 12, t: 12, b: 28 };
     const allPoints = series.flatMap((s) => s.points);
     if (!allPoints.length) {
-      ctx.fillStyle = '#8ea0b8';
+      ctx.fillStyle = '#8b98a8';
       ctx.fillText('No data in this range', pad.l, height / 2);
       return;
     }
@@ -109,10 +172,10 @@
     const xAt = (t) => pad.l + ((t - minX) / Math.max(1, maxX - minX)) * (width - pad.l - pad.r);
     const yAt = (v) => pad.t + (1 - v / maxY) * (height - pad.t - pad.b);
 
-    ctx.strokeStyle = '#243044';
+    ctx.strokeStyle = '#243040';
     ctx.lineWidth = 1;
-    ctx.fillStyle = '#8ea0b8';
-    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.fillStyle = '#8b98a8';
+    ctx.font = '11px IBM Plex Sans, system-ui, sans-serif';
     for (let i = 0; i <= 4; i++) {
       const y = pad.t + ((height - pad.t - pad.b) * i) / 4;
       const val = maxY * (1 - i / 4);
@@ -175,46 +238,50 @@
   }
 
   function shell(inner) {
-    const pages = [
-      ['overview', 'Overview'],
-      ['logs', 'App logs'],
-      ['network', 'Network'],
-      ['http', 'HTTP in'],
-      ['vision', 'Vision'],
-      ['billing', 'DeepInfra'],
-    ];
     return `
       <div class="shell">
-        <aside class="sidebar">
+        <header class="topbar">
           <div class="brand">
-            <div class="brand-mark">C</div>
-            <div>
-              <strong>Vision Monitor</strong>
-              <div class="user-pill">60-day ops</div>
-            </div>
+            <img class="brand-mark" src="/monitor/static/craftology-mark.png" alt="Craftology" width="28" height="28" />
+            <span>
+              <span class="brand-name">CRAFT//OPS</span>
+              <span class="brand-sub">Vision Monitor</span>
+            </span>
           </div>
-          ${pages.map(([id, label]) => `
-            <button class="nav-btn ${state.page === id ? 'active' : ''}" data-page="${id}">${label}</button>
+          <span class="live-dot${state.autoRefresh ? '' : ' off'}" title="${state.autoRefresh ? 'Live' : 'Paused'}"></span>
+          <div class="range-chips" role="tablist" aria-label="Time range">
+            ${RANGE_PRESETS.map(([label, ms]) => `
+              <button type="button" class="chip ${state.rangeMs === ms ? 'active' : ''}" data-range="${ms}">${label}</button>
+            `).join('')}
+            <button type="button" class="chip" id="refresh" title="Refresh">↻</button>
+          </div>
+          <div class="top-spacer"></div>
+          <button type="button" class="btn search-open" id="omni-open">
+            ${Chrome.SEARCH_SVG}
+            <span>Omnisearch</span>
+            <span class="kbd">Ctrl K</span>
+          </button>
+          <button type="button" class="chip ${state.autoRefresh ? 'active' : ''}" id="autorefresh">Live</button>
+        </header>
+        <nav class="sidebar">
+          ${NAV_PAGES.map(([id, label]) => `
+            <button type="button" class="nav-link ${state.page === id ? 'active' : ''}" data-page="${id}"><span>${label}</span></button>
           `).join('')}
-          <div class="sidebar-foot">
-            ${esc(state.user?.email || '')}<br />
-            <button class="btn ghost small" id="logout">Sign out</button>
+          <div class="nav-hint">Ctrl K search · j/k move · enter open · esc close</div>
+          <div class="user-box">
+            <span title="${esc(state.user?.email || '')}">${esc(state.user?.email || '')}</span>
+            <button type="button" class="icon-btn" id="logout" title="Sign out">⎋</button>
           </div>
-        </aside>
+        </nav>
         <main class="main">
-          <div class="topbar">
+          <div class="page-head">
             <div>
-              <h2>${esc(pages.find((p) => p[0] === state.page)?.[1] || 'Monitor')}</h2>
-              <div class="user-pill">Same Craftology admin role as the website</div>
-            </div>
-            <div class="top-actions">
-              <div class="range-group">
-                ${RANGE_PRESETS.map(([label, ms]) => `
-                  <button class="chip ${state.rangeMs === ms ? 'active' : ''}" data-range="${ms}">${label}</button>
-                `).join('')}
-              </div>
-              <button class="btn secondary small" id="refresh">Refresh</button>
-              <button class="chip ${state.autoRefresh ? 'active' : ''}" id="autorefresh">Live</button>
+              <h1>${esc(NAV_PAGES.find((p) => p[0] === state.page)?.[1] || 'Monitor')}</h1>
+              <p>${state.page === 'actions'
+      ? 'Named staff actions for this dashboard. Click a type to inspect or run it.'
+      : state.page === 'api-map'
+        ? 'Live route inventory. Staff monitor APIs vs license-token engine APIs are marked. Click a node to filter HTTP in.'
+        : 'Vision Monitor. Admin role required.'}</p>
             </div>
           </div>
           ${inner}
@@ -225,16 +292,13 @@
 
   function loginView(error = '') {
     return `
-      <div class="login-wrap">
+      <div class="auth-screen">
         <form class="login-card" id="login-form">
-          <div class="brand">
-            <div class="brand-mark">C</div>
-            <div>
-              <h1>Craftology admin</h1>
-            </div>
-          </div>
-          <p>Sign in with the same staff account you use on the Craftology website. Only <code>user_roles.role_name = admin</code> can open this monitor.</p>
-          ${error ? `<div class="error-banner">${esc(error)}</div>` : ''}
+          <img class="brand-mark login-mark" src="/monitor/static/craftology-mark.png" alt="Craftology" width="48" height="48" />
+          <p class="login-kicker">Staff console</p>
+          <h1>Craftology Monitor</h1>
+          <p class="sub">Vision Monitor. Same admin accounts as the Craftology site. Admin role required.</p>
+          ${error ? `<div class="banner">${esc(error)}</div>` : ''}
           <div class="field">
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" required />
@@ -243,7 +307,7 @@
             <label for="password">Password</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required />
           </div>
-          <button class="btn" type="submit" style="width:100%">Sign in</button>
+          <button class="btn btn-primary" type="submit">Sign in</button>
         </form>
       </div>
     `;
@@ -255,8 +319,9 @@
       e.preventDefault();
       const email = app.querySelector('#email').value;
       const password = app.querySelector('#password').value;
-      const btn = e.target.querySelector('button');
+      const btn = e.target.querySelector('button[type="submit"]');
       btn.disabled = true;
+      btn.textContent = 'Signing in…';
       try {
         const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
         state.user = data.user;
@@ -268,13 +333,59 @@
     });
   }
 
+  function goTo(page, detail = '') {
+    state.page = page;
+    if (page !== 'actions') state.actionId = '';
+    if (page === 'actions' && detail) state.actionId = detail;
+    const hash = detail ? `#/${page}/${detail}` : `#/${page}`;
+    if (location.hash !== hash) location.hash = hash;
+    else render();
+  }
+
+  async function copyText(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function runStaffAction(id) {
+    const action = STAFF_ACTIONS.find((a) => a.id === id) || STAFF_ACTIONS.find((a) => a.name === id);
+    if (!action) {
+      state.actionResult = { ok: false, message: 'Unknown action' };
+      return render();
+    }
+    state.actionId = action.id;
+    if (action.id === 'refresh-billing') {
+      try {
+        await api('/billing/refresh', { method: 'POST' });
+        state.actionResult = { ok: true, message: 'DeepInfra billing snapshot refreshed.' };
+      } catch (err) {
+        state.actionResult = { ok: false, message: err.message || 'Refresh failed' };
+      }
+      return render();
+    }
+    if (action.id === 'jump-logs') return goTo('logs');
+    if (action.id === 'jump-http') return goTo('http');
+    if (action.id === 'jump-network') return goTo('network');
+    if (action.id === 'copy-health' || action.id === 'copy-live' || action.id === 'copy-ready') {
+      const path = action.id === 'copy-health' ? '/health' : action.id === 'copy-live' ? '/live' : '/ready';
+      const ok = await copyText(`${location.origin}${path}`);
+      state.actionResult = { ok, message: ok ? `Copied ${location.origin}${path}` : 'Clipboard unavailable' };
+      return render();
+    }
+    if (action.id === 'logout') {
+      await api('/auth/logout', { method: 'POST' }).catch(() => {});
+      state.user = null;
+      return render();
+    }
+  }
+
   function bindShell() {
     app.querySelectorAll('[data-page]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        state.page = btn.dataset.page;
-        location.hash = `#/${state.page}`;
-        render();
-      });
+      btn.addEventListener('click', () => goTo(btn.dataset.page));
     });
     app.querySelectorAll('[data-range]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -283,6 +394,7 @@
       });
     });
     app.querySelector('#refresh')?.addEventListener('click', () => render());
+    app.querySelector('#omni-open')?.addEventListener('click', () => omni?.open());
     app.querySelector('#autorefresh')?.addEventListener('click', () => {
       state.autoRefresh = !state.autoRefresh;
       scheduleRefresh();
@@ -298,9 +410,10 @@
   function scheduleRefresh() {
     if (state.timer) clearInterval(state.timer);
     state.timer = null;
-    if (state.autoRefresh && state.user) {
+      if (state.autoRefresh && state.user) {
       state.timer = setInterval(() => {
         if (document.visibilityState !== 'visible') return;
+        if (omni?.isOpen()) return;
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
         render();
@@ -458,17 +571,17 @@
     const failPoints = (series.rows || []).map((r) => ({ t: r.ts, v: r.vision_fail || 0 }));
     const balPoints = (overview.billingSeries || []).map((r) => ({ t: r.ts, v: r.available_usd || 0 }));
     drawChart(document.getElementById('chart-req'), [
-      { name: 'Requests', color: '#3dd68c', fill: 'rgba(61,214,140,.12)', points: reqPoints },
+      { name: 'Requests', color: '#3ee0b0', fill: 'rgba(62,224,176,.12)', points: reqPoints },
       { name: 'HTTP errors', color: '#ff6b7a', points: errPoints },
     ]);
     drawChart(document.getElementById('chart-bal'), [
-      { name: 'Available USD', color: '#6cb6ff', fill: 'rgba(108,182,255,.12)', points: balPoints },
+      { name: 'Available USD', color: '#5cc8ff', fill: 'rgba(92,200,255,.12)', points: balPoints },
     ], { formatY: (v) => `$${v.toFixed(2)}` });
     drawChart(document.getElementById('chart-lat'), [
-      { name: 'Avg ms', color: '#e8b84a', points: latPoints },
+      { name: 'Avg ms', color: '#f0b429', points: latPoints },
     ], { formatY: (v) => `${Math.round(v)}ms` });
     drawChart(document.getElementById('chart-err'), [
-      { name: 'Success', color: '#3dd68c', points: okPoints },
+      { name: 'Success', color: '#3ee0b0', points: okPoints },
       { name: 'Fail', color: '#ff6b7a', points: failPoints },
     ]);
   }
@@ -591,7 +704,11 @@
     })}`);
     app.innerHTML = shell(`
       ${filterBar(`
-        ${selectField('path', 'Path', ['/analyze', '/confirm-vote'])}
+        ${selectField('path', 'Path', ['/analyze', '/confirm-vote', '/health', '/live', '/ready', '/monitor/api/overview'].concat(
+        state.filters.path && !['/analyze', '/confirm-vote', '/health', '/live', '/ready', '/monitor/api/overview'].includes(state.filters.path)
+          ? [state.filters.path]
+          : []
+      ))}
         ${selectField('task', 'Task', state.facets.tasks || [])}
         ${selectField('errors', 'Errors only', ['1'])}
         <div class="field">
@@ -737,12 +854,44 @@
     bindShell();
     bindExpand();
     drawChart(document.getElementById('chart-bal2'), [
-      { name: 'Available USD', color: '#3dd68c', fill: 'rgba(61,214,140,.12)', points: (overview.billingSeries || []).map((r) => ({ t: r.ts, v: r.available_usd || 0 })) },
-      { name: 'Recent spend', color: '#e8b84a', points: (overview.billingSeries || []).map((r) => ({ t: r.ts, v: r.recent_usd || 0 })) },
+      { name: 'Available USD', color: '#3ee0b0', fill: 'rgba(62,224,176,.12)', points: (overview.billingSeries || []).map((r) => ({ t: r.ts, v: r.available_usd || 0 })) },
+      { name: 'Recent spend', color: '#f0b429', points: (overview.billingSeries || []).map((r) => ({ t: r.ts, v: r.recent_usd || 0 })) },
     ], { formatY: (v) => `$${v.toFixed(2)}` });
     app.querySelector('#billing-refresh')?.addEventListener('click', async () => {
       await api('/billing/refresh', { method: 'POST' });
       render();
+    });
+  }
+
+  function renderActions() {
+    const selected = STAFF_ACTIONS.some((a) => a.id === state.actionId) ? state.actionId : '';
+    app.innerHTML = shell(Chrome.renderActions({
+      actions: STAFF_ACTIONS,
+      selectedId: selected,
+      result: state.actionResult,
+    }));
+    bindShell();
+    Chrome.bindActions(app, {
+      onSelect: (id) => {
+        state.actionResult = null;
+        goTo('actions', id);
+      },
+      onRun: (id) => runStaffAction(id),
+    });
+  }
+
+  function renderApiMap() {
+    app.innerHTML = shell(Chrome.renderApiMap({ routes: API_ROUTES, view: state.apiView }));
+    bindShell();
+    Chrome.bindApiMap(app, {
+      onToggle: (view) => {
+        state.apiView = view;
+        renderApiMap();
+      },
+      onOpen: (route) => {
+        state.filters.path = route.path;
+        goTo('http');
+      },
     });
   }
 
@@ -765,6 +914,8 @@
       if (state.page === 'http') return await renderHttp();
       if (state.page === 'vision') return await renderVision();
       if (state.page === 'billing') return await renderBilling();
+      if (state.page === 'actions') return renderActions();
+      if (state.page === 'api-map') return renderApiMap();
       return await renderOverview();
     } catch (err) {
       if (!state.user) return renderLogin(err.message === 'Staff login required' ? '' : err.message);
@@ -774,15 +925,72 @@
   }
 
   window.addEventListener('hashchange', () => {
-    state.page = location.hash.replace(/^#\/?/, '') || 'overview';
+    const loc = parseLocation();
+    state.page = loc.page;
+    state.actionId = loc.page === 'actions' ? loc.detail : state.actionId;
+    if (loc.page !== 'actions') state.actionResult = null;
     render();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === '/' && e.target.tagName !== 'INPUT') {
-      e.preventDefault();
-      app.querySelector('[data-filter="q"]')?.focus();
-    }
+    if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+    if (!state.user || omni?.isOpen()) return;
+    e.preventDefault();
+    omni?.open();
+  });
+
+  omni = Chrome.createOmni({
+    placeholder: 'status:500 path:/analyze level:error  ·  or free text',
+    isEnabled: () => Boolean(state.user),
+    getNav: () => NAV_PAGES.map(([id, label]) => ({ id: `nav-${id}`, label: `Go to ${label}`, to: id })),
+    getActions: () => STAFF_ACTIONS,
+    getRoutes: () => API_ROUTES,
+    go: (page) => goTo(page),
+    openAction: (id) => {
+      const match = STAFF_ACTIONS.find((a) => a.id === id || a.name === id);
+      goTo('actions', match?.id || id);
+    },
+    openRoute: (route) => {
+      state.filters.path = route.path;
+      goTo('http');
+    },
+    applyNetwork: (tokens) => {
+      if (tokens.path) state.filters.path = tokens.path;
+      if (tokens.q) state.filters.q = tokens.q;
+      goTo(tokens.path && (tokens.path.startsWith('/analyze') || tokens.path.startsWith('/confirm') || tokens.path.startsWith('/monitor') || tokens.path.startsWith('/health')) ? 'http' : 'network');
+    },
+    applyLogs: ({ request_id, q }) => {
+      if (request_id) state.filters.q = request_id;
+      if (q) state.filters.q = q;
+      goTo('logs');
+    },
+    openHttp: (row) => {
+      if (row.url) {
+        state.filters.q = row.url;
+        goTo('network');
+        return;
+      }
+      state.filters.path = row.path || '';
+      goTo('http');
+    },
+    openLog: (row) => {
+      state.filters.q = row.request_id || (row.msg || row.message || '').slice(0, 80);
+      if (row.level) state.filters.level = row.level;
+      goTo('logs');
+    },
+    searchLive: async (q, tokens) => {
+      const [logs, http, network] = await Promise.all([
+        api(`/logs${qs({ q: tokens.q || q, level: tokens.level || '', limit: '8' })}`).catch(() => ({ rows: [] })),
+        api(`/http${qs({ path: tokens.path || '', limit: '8' })}`).catch(() => ({ rows: [] })),
+        api(`/network${qs({ q: tokens.q || q, limit: '8' })}`).catch(() => ({ rows: [] })),
+      ]);
+      return {
+        logs: logs.rows || [],
+        http: [...(http.rows || []), ...(network.rows || []).map((row) => ({ ...row, path: row.url || row.path }))],
+      };
+    },
   });
 
   (async () => {

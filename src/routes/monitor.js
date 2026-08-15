@@ -36,12 +36,32 @@ function csvEscape(value) {
   return s;
 }
 
+function wantsHtml(request) {
+  const accept = String(request.headers.accept || '');
+  return accept.includes('text/html');
+}
+
+function sendMonitorPage(_request, reply) {
+  return reply.type('text/html; charset=utf-8').send(MONITOR_HTML);
+}
+
 async function monitorRoutes(fastify) {
+  // Same pattern as website-backend: browsers hitting the domain root get the login SPA.
+  fastify.get('/', {
+    config: { skipAuth: true, rateLimit: false },
+  }, async (request, reply) => {
+    if (wantsHtml(request)) return sendMonitorPage(request, reply);
+    return {
+      name: 'vision-backend',
+      status: 'running',
+      monitor: '/monitor',
+      health: '/health',
+    };
+  });
+
   fastify.get('/monitor', {
     config: { skipAuth: true, rateLimit: false },
-  }, async (_request, reply) => {
-    return reply.type('text/html; charset=utf-8').send(MONITOR_HTML);
-  });
+  }, sendMonitorPage);
 
   fastify.get('/monitor/', {
     config: { skipAuth: true, rateLimit: false },

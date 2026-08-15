@@ -89,7 +89,7 @@ Licensed `/analyze` requests run **in parallel** per queue key (license id / HWI
    curl https://your-visionbackend.railway.app/health
    # Should return status ok plus vision provider and queue state
   ```
-   Open `https://your-visionbackend.railway.app/monitor` and sign in with a Craftology **admin** account (`user_roles.role_name = admin` in the same Supabase project as the website).
+   Open `https://your-visionbackend.railway.app/` (or `/monitor`) and sign in with a Craftology **admin** account (`user_roles.role_name = admin` in the same Supabase project as the website). Browsers hitting the domain root get the login page, same as website-backend.
 
 ### Environment Variables
 

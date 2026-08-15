@@ -8,7 +8,7 @@ export const BILLING_POLL_MS = 3 * 60 * 1000;
 export const RETENTION_INTERVAL_MS = 60 * 60 * 1000;
 export const SCHEMA_VERSION = 1;
 
-export const SKIP_HTTP_PATHS = new Set(['/health', '/live', '/ready']);
+export const SKIP_HTTP_PATHS = new Set(['/', '/health', '/live', '/ready']);
 
 export const LEVEL_NAMES = {
   10: 'trace',
