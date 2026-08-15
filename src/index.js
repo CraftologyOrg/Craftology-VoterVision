@@ -21,6 +21,13 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+console.log(JSON.stringify({
+  level: 30,
+  time: Date.now(),
+  pid: process.pid,
+  msg: 'boot',
+  node: process.version,
+}));
 initMonitor();
 
 const fastify = Fastify({

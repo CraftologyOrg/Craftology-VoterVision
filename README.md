@@ -53,6 +53,7 @@ Licensed `/analyze` requests run **in parallel** per queue key (license id / HWI
 
 - Railway CLI installed (`npm i -g @railway/cli`)
 - A Railway project created
+- **Node 22** (required). Railpack reads `engines.node` / `.node-version`. Do not run this service on Node 20 — `better-sqlite3@13` will segfault and `/health` will never come up. If a deploy still shows Node 20, set `RAILPACK_NODE_VERSION=22` on the service and redeploy (clear build cache if needed).
 
 ### Steps
 
@@ -254,7 +255,7 @@ The `/health` endpoint always returns `200` and is never logged, so Railway heal
 
 ## Ops dashboard (`/monitor`)
 
-The same Railway service serves a staff dashboard at `/monitor`. Logs, inbound HTTP, outbound network calls, vision attempts, and DeepInfra billing snapshots are stored in SQLite on the attached volume (`/data/monitor/monitor.db`) for **60 days**.
+The same Railway service serves a staff dashboard at `/monitor`. Logs, inbound HTTP, outbound network calls, vision attempts, and DeepInfra billing snapshots are stored in SQLite on the attached volume (`/data/monitor/monitor.db`) for **60 days**. The SQLite addon requires **Node 22** at both build and runtime.
 
 - Sign-in uses Craftology email/password via Supabase Auth. Access is granted only when `user_roles.role_name = admin` (same staff role as the website).
 - Screenshots, `Captcha-Token`, API keys, and other secrets are not stored.
